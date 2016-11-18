@@ -17,22 +17,28 @@ limitations under the License.
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
+	"net/http"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"k8s.io/helm/cmd/helm/helmpath"
 	"k8s.io/helm/pkg/repo"
+	"k8s.io/helm/pkg/util"
 )
 
 type repoAddCmd struct {
-	name     string
-	url      string
-	home     helmpath.Home
-	out      io.Writer
-	noupdate bool
+	name       string
+	url        string
+	home       helmpath.Home
+	caCertFile string
+	certFile   string
+	keyFile    string
+	out        io.Writer
+	noupdate   bool
 }
 
 func newRepoAddCmd(out io.Writer) *cobra.Command {
@@ -57,15 +63,22 @@ func newRepoAddCmd(out io.Writer) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&add.noupdate, "no-update", false, "raise error if repo is already registered")
+	f.StringVar(&add.caCertFile, "tls-ca-cert", "", "path to the CAs cert file")
+	f.StringVar(&add.certFile, "tls-cert", "", "path to the client server TLS cert file")
+	f.StringVar(&add.keyFile, "tls-key", "", "path to the client server TLS key file")
 	return cmd
 }
 
 func (a *repoAddCmd) run() error {
-	var err error
+	client, err := getClient(a.certFile, a.keyFile, a.caCertFile)
+	if err != nil {
+		return err
+	}
+
 	if a.noupdate {
-		err = addRepository(a.name, a.url, a.home)
+		err = addRepository(a.name, a.url, a.home, client)
 	} else {
-		err = updateRepository(a.name, a.url, a.home)
+		err = updateRepository(a.name, a.url, a.home, client)
 	}
 	if err != nil {
 		return err
@@ -74,9 +87,9 @@ func (a *repoAddCmd) run() error {
 	return nil
 }
 
-func addRepository(name, url string, home helmpath.Home) error {
+func addRepository(name, url string, home helmpath.Home, client *http.Client) error {
 	cif := home.CacheIndex(name)
-	if err := repo.DownloadIndexFile(name, url, cif); err != nil {
+	if err := repo.DownloadIndexFile(name, url, cif, client); err != nil {
 		return fmt.Errorf("Looks like %q is not a valid chart repository or cannot be reached: %s", url, err.Error())
 	}
 
@@ -101,9 +114,9 @@ func insertRepoLine(name, url string, home helmpath.Home) error {
 	return f.WriteFile(home.RepositoryFile(), 0644)
 }
 
-func updateRepository(name, url string, home helmpath.Home) error {
+func updateRepository(name, url string, home helmpath.Home, client *http.Client) error {
 	cif := home.CacheIndex(name)
-	if err := repo.DownloadIndexFile(name, url, cif); err != nil {
+	if err := repo.DownloadIndexFile(name, url, cif, client); err != nil {
 		return err
 	}
 
@@ -124,4 +137,22 @@ func updateRepoLine(name, url string, home helmpath.Home) error {
 	})
 
 	return f.WriteFile(home.RepositoryFile(), 0666)
+}
+
+func getClient(certFile, keyFile, caFile string) (*http.Client, error) {
+	var tlsConf *tls.Config
+	var err error
+	if certFile != "" && keyFile != "" && caFile != "" {
+		tlsConf, err = util.NewClientTLS(certFile, keyFile, caFile)
+		if err != nil {
+			return nil, fmt.Errorf("can't create TLS config for client: %s", err.Error())
+		}
+		tlsConf.BuildNameToCertificate()
+	}
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: tlsConf,
+		},
+	}
+	return client, nil
 }

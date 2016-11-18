@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -85,7 +86,7 @@ func updateCharts(repos []*repo.Entry, verbose bool, out io.Writer, home helmpat
 				// We skip local because the indices are symlinked.
 				return
 			}
-			err := repo.DownloadIndexFile(n, u, home.CacheIndex(n))
+			err := repo.DownloadIndexFile(n, u, home.CacheIndex(n), http.DefaultClient)
 			if err != nil {
 				fmt.Fprintf(out, "...Unable to get an update from the %q chart repository (%s):\n\t%s\n", n, u, err)
 			} else {
