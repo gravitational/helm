@@ -17,7 +17,6 @@ limitations under the License.
 package main
 
 import (
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,14 +30,16 @@ import (
 )
 
 type repoAddCmd struct {
-	name       string
-	url        string
-	home       helmpath.Home
-	caCertFile string
-	certFile   string
-	keyFile    string
-	out        io.Writer
-	noupdate   bool
+	name     string
+	url      string
+	home     helmpath.Home
+	noupdate bool
+
+	certFile string
+	keyFile  string
+	caFile   string
+
+	out io.Writer
 }
 
 func newRepoAddCmd(out io.Writer) *cobra.Command {
@@ -61,18 +62,26 @@ func newRepoAddCmd(out io.Writer) *cobra.Command {
 			return add.run()
 		},
 	}
+
 	f := cmd.Flags()
 	f.BoolVar(&add.noupdate, "no-update", false, "raise error if repo is already registered")
-	f.StringVar(&add.caCertFile, "tls-ca-cert", "", "path to the CAs cert file")
-	f.StringVar(&add.certFile, "tls-cert", "", "path to the client server TLS cert file")
-	f.StringVar(&add.keyFile, "tls-key", "", "path to the client server TLS key file")
+	f.StringVar(&add.certFile, "cert-file", "", "identify HTTPS client using this SSL certificate file")
+	f.StringVar(&add.keyFile, "key-file", "", "identify HTTPS client using this SSL key file")
+	f.StringVar(&add.caFile, "ca-file", "", "verify certificates of HTTPS-enabled servers using this CA bundle")
+
 	return cmd
 }
 
 func (a *repoAddCmd) run() error {
-	client, err := getClient(a.certFile, a.keyFile, a.caCertFile)
-	if err != nil {
-		return err
+	var client *http.Client
+	var err error
+	if a.certFile != "" && a.keyFile != "" && a.caFile != "" {
+		client, err = util.NewHTTPClientTLS(a.certFile, a.keyFile, a.caFile)
+		if err != nil {
+			return err
+		}
+	} else {
+		client = http.DefaultClient
 	}
 
 	if a.noupdate {
@@ -137,22 +146,4 @@ func updateRepoLine(name, url string, home helmpath.Home) error {
 	})
 
 	return f.WriteFile(home.RepositoryFile(), 0666)
-}
-
-func getClient(certFile, keyFile, caFile string) (*http.Client, error) {
-	var tlsConf *tls.Config
-	var err error
-	if certFile != "" && keyFile != "" && caFile != "" {
-		tlsConf, err = util.NewClientTLS(certFile, keyFile, caFile)
-		if err != nil {
-			return nil, fmt.Errorf("can't create TLS config for client: %s", err.Error())
-		}
-		tlsConf.BuildNameToCertificate()
-	}
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: tlsConf,
-		},
-	}
-	return client, nil
 }

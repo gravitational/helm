@@ -50,6 +50,8 @@ type Manager struct {
 	Verify VerificationStrategy
 	// Keyring is the key ring file.
 	Keyring string
+	// A Client is an HTTP client.
+	Client *http.Client
 }
 
 // Build rebuilds a local charts directory from a lockfile.
@@ -180,6 +182,7 @@ func (m *Manager) downloadAll(deps []*chartutil.Dependency) error {
 		Verify:   m.Verify,
 		Keyring:  m.Keyring,
 		HelmHome: m.HelmHome,
+		Client:   m.Client,
 	}
 
 	destPath := filepath.Join(m.ChartPath, "charts")
