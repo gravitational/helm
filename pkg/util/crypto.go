@@ -34,7 +34,7 @@ func NewClientTLS(certFile, keyFile, caFile string) (*tls.Config, error) {
 		return nil, err
 	}
 	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
+		Certificates: []tls.Certificate{*cert},
 		RootCAs:      cp,
 	}, nil
 }
@@ -59,10 +59,10 @@ func CertPoolFromFile(filename string) (*x509.CertPool, error) {
 // certificates public/private key pair from a pair of given PEM-encoded files.
 // Returns an error if the file could not be read, a certificate could not
 // be parsed, or if the file does not contain any certificates
-func CertFromFilePair(certFile, keyFile string) (tls.Certificate, error) {
+func CertFromFilePair(certFile, keyFile string) (*tls.Certificate, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("can't load key pair from cert %s and key %s", certFile, keyFile)
+		return nil, fmt.Errorf("can't load key pair from cert %s and key %s", certFile, keyFile)
 	}
-	return cert, err
+	return &cert, err
 }
