@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"path/filepath"
 
@@ -28,7 +27,6 @@ import (
 	"k8s.io/helm/cmd/helm/downloader"
 	"k8s.io/helm/cmd/helm/helmpath"
 	"k8s.io/helm/pkg/chartutil"
-	"k8s.io/helm/pkg/httputil"
 )
 
 const fetchDesc = `
@@ -47,21 +45,15 @@ result in an error, and the chart will not be saved locally.
 `
 
 type fetchCmd struct {
-	untar    bool
-	untardir string
-	chartRef string
-	destdir  string
-	version  string
-
+	untar       bool
+	untardir    string
+	chartRef    string
+	destdir     string
+	version     string
 	verify      bool
 	verifyLater bool
 	keyring     string
-
-	certFile string
-	keyFile  string
-	caFile   string
-
-	out io.Writer
+	out         io.Writer
 }
 
 func newFetchCmd(out io.Writer) *cobra.Command {
@@ -93,30 +85,15 @@ func newFetchCmd(out io.Writer) *cobra.Command {
 	f.StringVar(&fch.version, "version", "", "specific version of a chart. Without this, the latest version is fetched")
 	f.StringVar(&fch.keyring, "keyring", defaultKeyring(), "keyring containing public keys")
 	f.StringVarP(&fch.destdir, "destination", "d", ".", "location to write the chart. If this and tardir are specified, tardir is appended to this")
-	f.StringVar(&fch.certFile, "cert-file", "", "identify HTTPS client using this SSL certificate file")
-	f.StringVar(&fch.keyFile, "key-file", "", "identify HTTPS client using this SSL key file")
-	f.StringVar(&fch.caFile, "ca-file", "", "verify certificates of HTTPS-enabled servers using this CA bundle")
-
 	return cmd
 }
 
 func (f *fetchCmd) run() error {
-	var client *http.Client
-	var err error
-	if f.certFile != "" && f.keyFile != "" && f.caFile != "" {
-		client, err = httputil.NewHTTPClientTLS(f.certFile, f.keyFile, f.caFile)
-		if err != nil {
-			return err
-		}
-	} else {
-		client = http.DefaultClient
-	}
 	c := downloader.ChartDownloader{
 		HelmHome: helmpath.Home(homePath()),
 		Out:      f.out,
 		Keyring:  f.keyring,
 		Verify:   downloader.VerifyNever,
-		Client:   client,
 	}
 
 	if f.verify {

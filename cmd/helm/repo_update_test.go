@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -44,9 +43,9 @@ func TestUpdateCmd(t *testing.T) {
 	out := bytes.NewBuffer(nil)
 	// Instead of using the HTTP updater, we provide our own for this test.
 	// The TestUpdateCharts test verifies the HTTP behavior independently.
-	updater := func(repos []*repo.Entry, verbose bool, out io.Writer, home helmpath.Home, client *http.Client) {
+	updater := func(repos []*repo.ChartRepository, out io.Writer) {
 		for _, re := range repos {
-			fmt.Fprintln(out, re.Name)
+			fmt.Fprintln(out, re.Config.Name)
 		}
 	}
 	uc := &repoUpdateCmd{
@@ -81,10 +80,13 @@ func TestUpdateCharts(t *testing.T) {
 	}
 
 	buf := bytes.NewBuffer(nil)
-	repos := []*repo.Entry{
-		{Name: "charts", URL: srv.URL()},
+	r, err := repo.NewChartRepository(repo.ChartRepositoryConfig{Name: "charts", URL: srv.URL()})
+	if err != nil {
+		t.Error(err)
 	}
-	updateCharts(repos, false, buf, helmpath.Home(thome), http.DefaultClient)
+	repos := []*repo.ChartRepository{r}
+
+	updateCharts(repos, buf)
 
 	got := buf.String()
 	if strings.Contains(got, "Unable to get an update") {

@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -226,29 +225,6 @@ func IndexDirectory(dir, baseURL string) (*IndexFile, error) {
 		index.Add(c.Metadata, fname, baseURL, hash)
 	}
 	return index, nil
-}
-
-// DownloadIndexFile fetches the index from a repository.
-func DownloadIndexFile(repoName, url, indexFilePath string, client *http.Client) error {
-	var indexURL string
-
-	indexURL = strings.TrimSuffix(url, "/") + "/index.yaml"
-	resp, err := client.Get(indexURL)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	b, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	if _, err := LoadIndex(b); err != nil {
-		return err
-	}
-
-	return ioutil.WriteFile(indexFilePath, b, 0644)
 }
 
 // LoadIndex loads an index file and does minimal validity checking.

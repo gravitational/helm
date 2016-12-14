@@ -19,14 +19,11 @@ package main
 import (
 	"fmt"
 	"io"
-	"net/http"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
 	"k8s.io/helm/cmd/helm/helmpath"
-	"k8s.io/helm/pkg/httputil"
 	"k8s.io/helm/pkg/repo"
 )
 
@@ -74,77 +71,43 @@ func newRepoAddCmd(out io.Writer) *cobra.Command {
 }
 
 func (a *repoAddCmd) run() error {
-	var client *http.Client
-	var err error
-	if a.certFile != "" && a.keyFile != "" && a.caFile != "" {
-		client, err = httputil.NewHTTPClientTLS(a.certFile, a.keyFile, a.caFile)
-		if err != nil {
-			return err
-		}
-	} else {
-		client = http.DefaultClient
-	}
-
-	if a.noupdate {
-		err = addRepository(a.name, a.url, a.home, client)
-	} else {
-		err = updateRepository(a.name, a.url, a.home, client)
-	}
-	if err != nil {
+	if err := addRepository(a.name, a.url, a.home, a.certFile, a.keyFile, a.caFile, a.noupdate); err != nil {
 		return err
 	}
 	fmt.Fprintf(a.out, "%q has been added to your repositories\n", a.name)
 	return nil
 }
 
-func addRepository(name, url string, home helmpath.Home, client *http.Client) error {
+func addRepository(name, url string, home helmpath.Home, certFile, keyFile, caFile string, noUpdate bool) error {
+	f, err := repo.LoadRepositoriesFile(home.RepositoryFile())
+	if err != nil {
+		return err
+	}
+
+	if noUpdate && f.Has(name) {
+		return fmt.Errorf("The repository name you provided (%s) already exists. Please specify a different name.", name)
+	}
+
 	cif := home.CacheIndex(name)
-	if err := repo.DownloadIndexFile(name, url, cif, client); err != nil {
+	c := repo.ChartRepositoryConfig{
+		Name:     name,
+		Cache:    filepath.Base(cif),
+		URL:      url,
+		CertFile: certFile,
+		KeyFile:  keyFile,
+		CAFile:   caFile,
+	}
+
+	r, err := repo.NewChartRepository(c)
+	if err != nil {
+		return err
+	}
+
+	if err := r.DownloadIndexFile(); err != nil {
 		return fmt.Errorf("Looks like %q is not a valid chart repository or cannot be reached: %s", url, err.Error())
 	}
 
-	return insertRepoLine(name, url, home)
-}
+	f.Update(&c)
 
-func insertRepoLine(name, url string, home helmpath.Home) error {
-	cif := home.CacheIndex(name)
-	f, err := repo.LoadRepositoriesFile(home.RepositoryFile())
-	if err != nil {
-		return err
-	}
-
-	if f.Has(name) {
-		return fmt.Errorf("The repository name you provided (%s) already exists. Please specify a different name.", name)
-	}
-	f.Add(&repo.Entry{
-		Name:  name,
-		URL:   strings.TrimSuffix(url, "/"),
-		Cache: filepath.Base(cif),
-	})
 	return f.WriteFile(home.RepositoryFile(), 0644)
-}
-
-func updateRepository(name, url string, home helmpath.Home, client *http.Client) error {
-	cif := home.CacheIndex(name)
-	if err := repo.DownloadIndexFile(name, url, cif, client); err != nil {
-		return err
-	}
-
-	return updateRepoLine(name, url, home)
-}
-
-func updateRepoLine(name, url string, home helmpath.Home) error {
-	cif := home.CacheIndex(name)
-	f, err := repo.LoadRepositoriesFile(home.RepositoryFile())
-	if err != nil {
-		return err
-	}
-
-	f.Update(&repo.Entry{
-		Name:  name,
-		URL:   url,
-		Cache: filepath.Base(cif),
-	})
-
-	return f.WriteFile(home.RepositoryFile(), 0666)
 }

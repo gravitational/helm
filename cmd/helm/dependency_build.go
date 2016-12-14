@@ -17,13 +17,11 @@ package main
 
 import (
 	"io"
-	"net/http"
 
 	"github.com/spf13/cobra"
 
 	"k8s.io/helm/cmd/helm/downloader"
 	"k8s.io/helm/cmd/helm/helmpath"
-	"k8s.io/helm/pkg/httputil"
 )
 
 const dependencyBuildDesc = `
@@ -42,12 +40,7 @@ type dependencyBuildCmd struct {
 	verify    bool
 	keyring   string
 	helmhome  helmpath.Home
-
-	certFile string
-	keyFile  string
-	caFile   string
-
-	out io.Writer
+	out       io.Writer
 }
 
 func newDependencyBuildCmd(out io.Writer) *cobra.Command {
@@ -73,30 +66,15 @@ func newDependencyBuildCmd(out io.Writer) *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&dbc.verify, "verify", false, "verify the packages against signatures")
 	f.StringVar(&dbc.keyring, "keyring", defaultKeyring(), "keyring containing public keys")
-	f.StringVar(&dbc.certFile, "cert-file", "", "identify HTTPS client using this SSL certificate file")
-	f.StringVar(&dbc.keyFile, "key-file", "", "identify HTTPS client using this SSL key file")
-	f.StringVar(&dbc.caFile, "ca-file", "", "verify certificates of HTTPS-enabled servers using this CA bundle")
-
 	return cmd
 }
 
 func (d *dependencyBuildCmd) run() error {
-	var client *http.Client
-	var err error
-	if d.certFile != "" && d.keyFile != "" && d.caFile != "" {
-		client, err = httputil.NewHTTPClientTLS(d.certFile, d.keyFile, d.caFile)
-		if err != nil {
-			return err
-		}
-	} else {
-		client = http.DefaultClient
-	}
 	man := &downloader.Manager{
 		Out:       d.out,
 		ChartPath: d.chartpath,
 		HelmHome:  d.helmhome,
 		Keyring:   d.keyring,
-		Client:    client,
 	}
 	if d.verify {
 		man.Verify = downloader.VerifyIfPossible

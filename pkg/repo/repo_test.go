@@ -33,12 +33,12 @@ const testURL = "http://example-charts.com"
 func TestRepoFile(t *testing.T) {
 	rf := NewRepoFile()
 	rf.Add(
-		&Entry{
+		&ChartRepositoryConfig{
 			Name:  "stable",
 			URL:   "https://example.com/stable/charts",
 			Cache: "stable-index.yaml",
 		},
-		&Entry{
+		&ChartRepositoryConfig{
 			Name:  "incubator",
 			URL:   "https://example.com/incubator",
 			Cache: "incubator-index.yaml",
@@ -68,15 +68,15 @@ func TestRepoFile(t *testing.T) {
 	}
 }
 
-func TestLoadRepositoriesFile(t *testing.T) {
+func TestNewRepositoriesFile(t *testing.T) {
 	expects := NewRepoFile()
 	expects.Add(
-		&Entry{
+		&ChartRepositoryConfig{
 			Name:  "stable",
 			URL:   "https://example.com/stable/charts",
 			Cache: "stable-index.yaml",
 		},
-		&Entry{
+		&ChartRepositoryConfig{
 			Name:  "incubator",
 			URL:   "https://example.com/incubator",
 			Cache: "incubator-index.yaml",
@@ -106,7 +106,7 @@ func TestLoadRepositoriesFile(t *testing.T) {
 	}
 }
 
-func TestLoadPreV1RepositoriesFile(t *testing.T) {
+func TestNewPreV1RepositoriesFile(t *testing.T) {
 	r, err := LoadRepositoriesFile("testdata/old-repositories.yaml")
 	if err != nil && err != ErrRepoOutOfDate {
 		t.Fatal(err)
@@ -128,28 +128,28 @@ func TestLoadPreV1RepositoriesFile(t *testing.T) {
 }
 
 func TestLoadChartRepository(t *testing.T) {
-	cr, err := LoadChartRepository(testRepository, testURL)
+	cr, err := NewChartRepository(ChartRepositoryConfig{Name: testRepository, URL: testURL})
 	if err != nil {
 		t.Errorf("Problem loading chart repository from %s: %v", testRepository, err)
 	}
 
 	paths := []string{filepath.Join(testRepository, "frobnitz-1.2.3.tgz"), filepath.Join(testRepository, "sprocket-1.1.0.tgz"), filepath.Join(testRepository, "sprocket-1.2.0.tgz")}
 
-	if cr.RootPath != testRepository {
-		t.Errorf("Expected %s as RootPath but got %s", testRepository, cr.RootPath)
+	if cr.Config.Name != testRepository {
+		t.Errorf("Expected %s as Name but got %s", testRepository, cr.Config.Name)
 	}
 
 	if !reflect.DeepEqual(cr.ChartPaths, paths) {
 		t.Errorf("Expected %#v but got %#v\n", paths, cr.ChartPaths)
 	}
 
-	if cr.URL != testURL {
-		t.Errorf("Expected url for chart repository to be %s but got %s", testURL, cr.URL)
+	if cr.Config.URL != testURL {
+		t.Errorf("Expected url for chart repository to be %s but got %s", testURL, cr.Config.URL)
 	}
 }
 
 func TestIndex(t *testing.T) {
-	cr, err := LoadChartRepository(testRepository, testURL)
+	cr, err := NewChartRepository(ChartRepositoryConfig{Name: testRepository, URL: testURL})
 	if err != nil {
 		t.Errorf("Problem loading chart repository from %s: %v", testRepository, err)
 	}

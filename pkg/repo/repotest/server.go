@@ -160,7 +160,7 @@ func (s *Server) LinkIndices() error {
 // setTestingRepository sets up a testing repository.yaml with only the given name/URL.
 func setTestingRepository(helmhome, name, url string) error {
 	rf := repo.NewRepoFile()
-	rf.Add(&repo.Entry{Name: name, URL: url})
+	rf.Add(&repo.ChartRepositoryConfig{Name: name, URL: url})
 	os.MkdirAll(filepath.Join(helmhome, "repository", name), 0755)
 	dest := filepath.Join(helmhome, "repository/repositories.yaml")
 

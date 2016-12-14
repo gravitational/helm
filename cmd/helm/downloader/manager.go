@@ -20,13 +20,11 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/Masterminds/semver"
 	"github.com/ghodss/yaml"
@@ -50,8 +48,6 @@ type Manager struct {
 	Verify VerificationStrategy
 	// Keyring is the key ring file.
 	Keyring string
-	// A Client is an HTTP client.
-	Client *http.Client
 }
 
 // Build rebuilds a local charts directory from a lockfile.
@@ -182,7 +178,6 @@ func (m *Manager) downloadAll(deps []*chartutil.Dependency) error {
 		Verify:   m.Verify,
 		Keyring:  m.Keyring,
 		HelmHome: m.HelmHome,
-		Client:   m.Client,
 	}
 
 	destPath := filepath.Join(m.ChartPath, "charts")
@@ -292,22 +287,22 @@ func (m *Manager) UpdateRepositories() error {
 	return nil
 }
 
-func (m *Manager) parallelRepoUpdate(repos []*repo.Entry) {
+func (m *Manager) parallelRepoUpdate(repos []*repo.ChartRepositoryConfig) {
 	out := m.Out
-	fmt.Fprintln(out, "Hang tight while we grab the latest from your chart repositories...")
-	var wg sync.WaitGroup
-	for _, re := range repos {
-		wg.Add(1)
-		go func(n, u string) {
-			if err := repo.DownloadIndexFile(n, u, m.HelmHome.CacheIndex(n), http.DefaultClient); err != nil {
-				fmt.Fprintf(out, "...Unable to get an update from the %q chart repository (%s):\n\t%s\n", n, u, err)
-			} else {
-				fmt.Fprintf(out, "...Successfully got an update from the %q chart repository\n", n)
-			}
-			wg.Done()
-		}(re.Name, re.URL)
-	}
-	wg.Wait()
+	//fmt.Fprintln(out, "Hang tight while we grab the latest from your chart repositories...")
+	//var wg sync.WaitGroup
+	//for _, re := range repos {
+	//wg.Add(1)
+	//go func(n, u string) {
+	//if err := repo.DownloadIndexFile(n, u, m.HelmHome.CacheIndex(n), http.DefaultClient); err != nil {
+	//fmt.Fprintf(out, "...Unable to get an update from the %q chart repository (%s):\n\t%s\n", n, u, err)
+	//} else {
+	//fmt.Fprintf(out, "...Successfully got an update from the %q chart repository\n", n)
+	//}
+	//wg.Done()
+	//}(re.Name, re.URL)
+	//}
+	//wg.Wait()
 	fmt.Fprintln(out, "Update Complete. ⎈Happy Helming!⎈")
 }
 
@@ -346,7 +341,7 @@ func urlsAreEqual(a, b string) bool {
 // If it finds a URL that is "relative", it will prepend the repoURL.
 func findChartURL(name, version, repoURL string, repos map[string]*repo.ChartRepository) (string, error) {
 	for _, cr := range repos {
-		if urlsAreEqual(repoURL, cr.URL) {
+		if urlsAreEqual(repoURL, cr.Config.URL) {
 			entry, err := findEntryByName(name, cr)
 			if err != nil {
 				return "", err
@@ -444,7 +439,7 @@ func (m *Manager) loadChartRepositories() (map[string]*repo.ChartRepository, err
 		}
 
 		cr := &repo.ChartRepository{
-			URL:       re.URL,
+			Config:    *re,
 			IndexFile: index,
 		}
 		indices[lname] = cr

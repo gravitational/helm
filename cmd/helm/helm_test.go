@@ -255,11 +255,11 @@ func ensureTestHome(home helmpath.Home, t *testing.T) error {
 	repoFile := home.RepositoryFile()
 	if fi, err := os.Stat(repoFile); err != nil {
 		rf := repo.NewRepoFile()
-		rf.Add(&repo.Entry{
+		rf.Add(&repo.ChartRepositoryConfig{
 			Name:  "charts",
 			URL:   "http://example.com/foo",
 			Cache: "charts-index.yaml",
-		}, &repo.Entry{
+		}, &repo.ChartRepositoryConfig{
 			Name:  "local",
 			URL:   "http://localhost.com:7743/foo",
 			Cache: "local-index.yaml",

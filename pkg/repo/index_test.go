@@ -133,7 +133,12 @@ func TestDownloadIndexFile(t *testing.T) {
 	defer os.RemoveAll(dirName)
 
 	path := filepath.Join(dirName, testRepo+"-index.yaml")
-	if err := DownloadIndexFile(testRepo, srv.URL, path, http.DefaultClient); err != nil {
+	r, err := NewChartRepository(ChartRepositoryConfig{Name: testRepo, URL: srv.URL, Cache: path})
+	if err != nil {
+		t.Errorf("Problem loading chart repository from %s: %v", testRepo, err)
+	}
+
+	if err := r.DownloadIndexFile(); err != nil {
 		t.Errorf("%#v", err)
 	}
 

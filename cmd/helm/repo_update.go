@@ -20,13 +20,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"sync"
 
 	"github.com/spf13/cobra"
 
 	"k8s.io/helm/cmd/helm/helmpath"
-	"k8s.io/helm/pkg/httputil"
 	"k8s.io/helm/pkg/repo"
 )
 
@@ -38,15 +36,14 @@ Information is cached locally, where it is used by commands like 'helm search'.
 future releases.
 `
 
+var (
+	errNoRepositories = errors.New("no repositories found. You must add one before updating")
+)
+
 type repoUpdateCmd struct {
-	update func([]*repo.Entry, bool, io.Writer, helmpath.Home, *http.Client)
+	update func([]*repo.ChartRepository, io.Writer)
 	home   helmpath.Home
-
-	certFile string
-	keyFile  string
-	caFile   string
-
-	out io.Writer
+	out    io.Writer
 }
 
 func newRepoUpdateCmd(out io.Writer) *cobra.Command {
@@ -64,58 +61,47 @@ func newRepoUpdateCmd(out io.Writer) *cobra.Command {
 			return u.run()
 		},
 	}
-
-	f := cmd.Flags()
-	f.StringVar(&u.certFile, "cert-file", "", "identify HTTPS client using this SSL certificate file")
-	f.StringVar(&u.keyFile, "key-file", "", "identify HTTPS client using this SSL key file")
-	f.StringVar(&u.caFile, "ca-file", "", "verify certificates of HTTPS-enabled servers using this CA bundle")
-
 	return cmd
 }
 
 func (u *repoUpdateCmd) run() error {
-	var client *http.Client
-	var err error
-	if u.certFile != "" && u.keyFile != "" && u.caFile != "" {
-		client, err = httputil.NewHTTPClientTLS(u.certFile, u.keyFile, u.caFile)
-		if err != nil {
-			return err
-		}
-	} else {
-		client = http.DefaultClient
-	}
-
 	f, err := repo.LoadRepositoriesFile(u.home.RepositoryFile())
 	if err != nil {
 		return err
 	}
 
 	if len(f.Repositories) == 0 {
-		return errors.New("no repositories found. You must add one before updating")
+		return errNoRepositories
+	}
+	var repos []*repo.ChartRepository
+	for _, cfg := range f.Repositories {
+		if r, err := repo.NewChartRepository(*cfg); err != nil {
+			repos = append(repos, r)
+		}
 	}
 
-	u.update(f.Repositories, flagDebug, u.out, u.home, client)
+	u.update(repos, u.out)
 	return nil
 }
 
-func updateCharts(repos []*repo.Entry, verbose bool, out io.Writer, home helmpath.Home, client *http.Client) {
+func updateCharts(repos []*repo.ChartRepository, out io.Writer) {
 	fmt.Fprintln(out, "Hang tight while we grab the latest from your chart repositories...")
 	var wg sync.WaitGroup
 	for _, re := range repos {
 		wg.Add(1)
-		go func(n, u string) {
+		go func(re *repo.ChartRepository) {
 			defer wg.Done()
-			if n == localRepository {
-				// We skip local because the indices are symlinked.
+			if re.Config.Name == localRepository {
+				fmt.Fprintf(out, "...Skip %s chart repository", re.Config.Name)
 				return
 			}
-			err := repo.DownloadIndexFile(n, u, home.CacheIndex(n), client)
+			err := re.DownloadIndexFile()
 			if err != nil {
-				fmt.Fprintf(out, "...Unable to get an update from the %q chart repository (%s):\n\t%s\n", n, u, err)
+				fmt.Fprintf(out, "...Unable to get an update from the %q chart repository (%s):\n\t%s\n", re.Config.Name, re.Config.URL, err)
 			} else {
-				fmt.Fprintf(out, "...Successfully got an update from the %q chart repository\n", n)
+				fmt.Fprintf(out, "...Successfully got an update from the %q chart repository\n", re.Config.Name)
 			}
-		}(re.Name, re.URL)
+		}(re)
 	}
 	wg.Wait()
 	fmt.Fprintln(out, "Update Complete. ⎈ Happy Helming!⎈ ")
