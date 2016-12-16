@@ -175,11 +175,10 @@ func ensureDirectories(home helmpath.Home, out io.Writer) error {
 
 func ensureDefaultRepos(home helmpath.Home, out io.Writer) error {
 	repoFile := home.RepositoryFile()
-	fi, err := os.Stat(repoFile)
-	if err != nil {
+	if fi, err := os.Stat(repoFile); err != nil {
 		fmt.Fprintf(out, "Creating %s \n", repoFile)
 		f := repo.NewRepoFile()
-		sr, err := initStableRepo()
+		sr, err := initStableRepo(home.CacheIndex(stableRepository))
 		if err != nil {
 			return err
 		}
@@ -190,21 +189,20 @@ func ensureDefaultRepos(home helmpath.Home, out io.Writer) error {
 		f.Add(sr)
 		f.Add(lr)
 		f.WriteFile(repoFile, 0644)
-	}
-	if fi.IsDir() {
+	} else if fi.IsDir() {
 		return fmt.Errorf("%s must be a file, not a directory", repoFile)
 	}
 	return nil
 }
 
-func initStableRepo() (*repo.ChartRepositoryConfig, error) {
+func initStableRepo(cacheFile string) (*repo.ChartRepositoryConfig, error) {
 	c := repo.ChartRepositoryConfig{
 		Name:  stableRepository,
 		URL:   stableRepositoryURL,
-		Cache: "stable-index.yaml",
+		Cache: cacheFile,
 	}
 
-	r, err := repo.NewChartRepository(c)
+	r, err := repo.NewChartRepository(&c)
 	if err != nil {
 		return nil, err
 	}
@@ -217,14 +215,7 @@ func initStableRepo() (*repo.ChartRepositoryConfig, error) {
 }
 
 func initLocalRepo(indexFile, cacheFile string) (*repo.ChartRepositoryConfig, error) {
-	c := repo.ChartRepositoryConfig{
-		Name:  localRepository,
-		URL:   localRepositoryURL,
-		Cache: "local-index.yaml",
-	}
-
-	fi, err := os.Stat(indexFile)
-	if err != nil {
+	if fi, err := os.Stat(indexFile); err != nil {
 		i := repo.NewIndexFile()
 		if err := i.WriteFile(indexFile, 0644); err != nil {
 			return nil, err
@@ -232,12 +223,15 @@ func initLocalRepo(indexFile, cacheFile string) (*repo.ChartRepositoryConfig, er
 
 		//TODO: take this out and replace with helm update functionality
 		os.Symlink(indexFile, cacheFile)
-	}
-	if fi.IsDir() {
+	} else if fi.IsDir() {
 		return nil, fmt.Errorf("%s must be a file, not a directory", indexFile)
 	}
 
-	return &c, nil
+	return &repo.ChartRepositoryConfig{
+		Name:  localRepository,
+		URL:   localRepositoryURL,
+		Cache: cacheFile,
+	}, nil
 }
 
 func ensureRepoFileFormat(file string, out io.Writer) error {

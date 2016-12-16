@@ -19,7 +19,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -91,14 +90,14 @@ func addRepository(name, url string, home helmpath.Home, certFile, keyFile, caFi
 	cif := home.CacheIndex(name)
 	c := repo.ChartRepositoryConfig{
 		Name:     name,
-		Cache:    filepath.Base(cif),
+		Cache:    cif,
 		URL:      url,
 		CertFile: certFile,
 		KeyFile:  keyFile,
 		CAFile:   caFile,
 	}
 
-	r, err := repo.NewChartRepository(c)
+	r, err := repo.NewChartRepository(&c)
 	if err != nil {
 		return err
 	}

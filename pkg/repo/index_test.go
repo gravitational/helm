@@ -132,21 +132,25 @@ func TestDownloadIndexFile(t *testing.T) {
 	}
 	defer os.RemoveAll(dirName)
 
-	path := filepath.Join(dirName, testRepo+"-index.yaml")
-	r, err := NewChartRepository(ChartRepositoryConfig{Name: testRepo, URL: srv.URL, Cache: path})
+	indexFilePath := filepath.Join(dirName, testRepo+"-index.yaml")
+	r, err := NewChartRepository(&ChartRepositoryConfig{
+		Name:  testRepo,
+		URL:   srv.URL,
+		Cache: indexFilePath,
+	})
 	if err != nil {
-		t.Errorf("Problem loading chart repository from %s: %v", testRepo, err)
+		t.Errorf("Problem creating chart repository from %s: %v", testRepo, err)
 	}
 
 	if err := r.DownloadIndexFile(); err != nil {
 		t.Errorf("%#v", err)
 	}
 
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(indexFilePath); err != nil {
 		t.Errorf("error finding created index file: %#v", err)
 	}
 
-	b, err := ioutil.ReadFile(path)
+	b, err := ioutil.ReadFile(indexFilePath)
 	if err != nil {
 		t.Errorf("error reading index file: %#v", err)
 	}

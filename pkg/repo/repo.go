@@ -43,26 +43,17 @@ type ChartRepositoryConfig struct {
 
 // ChartRepository represents a chart repository
 type ChartRepository struct {
-	Config     ChartRepositoryConfig
+	Config     *ChartRepositoryConfig
 	ChartPaths []string
 	IndexFile  *IndexFile
 	Client     *http.Client
 }
 
 // NewChartRepository constructs ChartRepository
-func NewChartRepository(c ChartRepositoryConfig) (*ChartRepository, error) {
-	dir := c.Name
-	dirInfo, err := os.Stat(dir)
-	if err != nil {
-		return nil, err
-	}
-	if !dirInfo.IsDir() {
-		return nil, fmt.Errorf("%q is not a directory", dir)
-	}
-
+func NewChartRepository(cfg *ChartRepositoryConfig) (*ChartRepository, error) {
 	client := http.DefaultClient
-	if c.CertFile != "" && c.KeyFile != "" && c.CAFile != "" {
-		tlsConf, err := tlsutil.NewClientTLS(c.CertFile, c.KeyFile, c.CAFile)
+	if cfg.CertFile != "" && cfg.KeyFile != "" && cfg.CAFile != "" {
+		tlsConf, err := tlsutil.NewClientTLS(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("can't create TLS config for client: %s", err.Error())
 		}
@@ -72,15 +63,25 @@ func NewChartRepository(c ChartRepositoryConfig) (*ChartRepository, error) {
 		}
 	}
 
-	r := &ChartRepository{Config: c, Client: client}
-
-	return r, nil
+	return &ChartRepository{
+		Config:    cfg,
+		IndexFile: NewIndexFile(),
+		Client:    client,
+	}, nil
 }
 
 // Load loads a directory of charts as if it were a repository.
 //
 // It requires the presence of an index.yaml file in the directory.
 func (r *ChartRepository) Load() error {
+	dirInfo, err := os.Stat(r.Config.Name)
+	if err != nil {
+		return err
+	}
+	if !dirInfo.IsDir() {
+		return fmt.Errorf("%q is not a directory", r.Config.Name)
+	}
+
 	// FIXME: Why are we recursively walking directories?
 	// FIXME: Why are we not reading the repositories.yaml to figure out
 	// what repos to use?
@@ -121,7 +122,7 @@ func (r *ChartRepository) DownloadIndexFile() error {
 		return err
 	}
 
-	return ioutil.WriteFile(filepath.Join(r.Config.Cache, indexPath), index, 0644)
+	return ioutil.WriteFile(r.Config.Cache, index, 0644)
 }
 
 // Index generates an index for the chart repository and writes an index.yaml file.
@@ -142,10 +143,6 @@ func (r *ChartRepository) saveIndexFile() error {
 }
 
 func (r *ChartRepository) generateIndex() error {
-	if r.IndexFile == nil {
-		r.IndexFile = NewIndexFile()
-	}
-
 	for _, path := range r.ChartPaths {
 		ch, err := chartutil.Load(path)
 		if err != nil {

@@ -97,7 +97,7 @@ func TestRepoAdd(t *testing.T) {
 		t.Errorf("Repository was not updated: %s", err)
 	}
 
-	if err := addRepository(testName, ts.URL(), hh, "", "", "", true); err != nil {
+	if err := addRepository(testName, ts.URL(), hh, "", "", "", false); err != nil {
 		t.Errorf("Duplicate repository name was added")
 	}
 }

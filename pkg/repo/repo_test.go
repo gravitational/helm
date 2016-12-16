@@ -128,33 +128,51 @@ func TestNewPreV1RepositoriesFile(t *testing.T) {
 }
 
 func TestLoadChartRepository(t *testing.T) {
-	cr, err := NewChartRepository(ChartRepositoryConfig{Name: testRepository, URL: testURL})
+	r, err := NewChartRepository(&ChartRepositoryConfig{
+		Name: testRepository,
+		URL:  testURL,
+	})
 	if err != nil {
+		t.Errorf("Problem creating chart repository from %s: %v", testRepository, err)
+	}
+
+	if err := r.Load(); err != nil {
 		t.Errorf("Problem loading chart repository from %s: %v", testRepository, err)
 	}
 
-	paths := []string{filepath.Join(testRepository, "frobnitz-1.2.3.tgz"), filepath.Join(testRepository, "sprocket-1.1.0.tgz"), filepath.Join(testRepository, "sprocket-1.2.0.tgz")}
-
-	if cr.Config.Name != testRepository {
-		t.Errorf("Expected %s as Name but got %s", testRepository, cr.Config.Name)
+	paths := []string{
+		filepath.Join(testRepository, "frobnitz-1.2.3.tgz"),
+		filepath.Join(testRepository, "sprocket-1.1.0.tgz"),
+		filepath.Join(testRepository, "sprocket-1.2.0.tgz"),
 	}
 
-	if !reflect.DeepEqual(cr.ChartPaths, paths) {
-		t.Errorf("Expected %#v but got %#v\n", paths, cr.ChartPaths)
+	if r.Config.Name != testRepository {
+		t.Errorf("Expected %s as Name but got %s", testRepository, r.Config.Name)
 	}
 
-	if cr.Config.URL != testURL {
-		t.Errorf("Expected url for chart repository to be %s but got %s", testURL, cr.Config.URL)
+	if !reflect.DeepEqual(r.ChartPaths, paths) {
+		t.Errorf("Expected %#v but got %#v\n", paths, r.ChartPaths)
+	}
+
+	if r.Config.URL != testURL {
+		t.Errorf("Expected url for chart repository to be %s but got %s", testURL, r.Config.URL)
 	}
 }
 
 func TestIndex(t *testing.T) {
-	cr, err := NewChartRepository(ChartRepositoryConfig{Name: testRepository, URL: testURL})
+	r, err := NewChartRepository(&ChartRepositoryConfig{
+		Name: testRepository,
+		URL:  testURL,
+	})
 	if err != nil {
+		t.Errorf("Problem creating chart repository from %s: %v", testRepository, err)
+	}
+
+	if err := r.Load(); err != nil {
 		t.Errorf("Problem loading chart repository from %s: %v", testRepository, err)
 	}
 
-	err = cr.Index()
+	err = r.Index()
 	if err != nil {
 		t.Errorf("Error performing index: %v\n", err)
 	}
@@ -168,7 +186,7 @@ func TestIndex(t *testing.T) {
 	verifyIndex(t, actual)
 
 	// Re-index and test again.
-	err = cr.Index()
+	err = r.Index()
 	if err != nil {
 		t.Errorf("Error performing re-index: %s\n", err)
 	}

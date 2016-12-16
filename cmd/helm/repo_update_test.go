@@ -49,9 +49,9 @@ func TestUpdateCmd(t *testing.T) {
 		}
 	}
 	uc := &repoUpdateCmd{
-		out:    out,
 		update: updater,
 		home:   helmpath.Home(thome),
+		out:    out,
 	}
 	if err := uc.run(); err != nil {
 		t.Fatal(err)
@@ -80,7 +80,10 @@ func TestUpdateCharts(t *testing.T) {
 	}
 
 	buf := bytes.NewBuffer(nil)
-	r, err := repo.NewChartRepository(repo.ChartRepositoryConfig{Name: "charts", URL: srv.URL()})
+	r, err := repo.NewChartRepository(&repo.ChartRepositoryConfig{
+		Name: "charts",
+		URL:  srv.URL(),
+	})
 	if err != nil {
 		t.Error(err)
 	}
