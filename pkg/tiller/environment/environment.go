@@ -31,12 +31,10 @@ import (
 	"k8s.io/helm/pkg/proto/hapi/chart"
 	"k8s.io/helm/pkg/storage"
 	"k8s.io/helm/pkg/storage/driver"
-	"k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/client/unversioned/testclient"
 )
 
-// TillerNamespace is the namespace tiller is running in.
-const TillerNamespace = "kube-system"
+// DefaultTillerNamespace is the default namespace for tiller.
+const DefaultTillerNamespace = "kube-system"
 
 // GoTplEngine is the name of the Go template engine, as registered in the EngineYard.
 const GoTplEngine = "gotpl"
@@ -133,24 +131,13 @@ type KubeClient interface {
 	//
 	// reader must contain a YAML stream (one or more YAML documents separated
 	// by "\n---\n").
-	Update(namespace string, originalReader, modifiedReader io.Reader) error
-
-	// APIClient gets a raw API client for Kubernetes.
-	APIClient() (unversioned.Interface, error)
+	Update(namespace string, originalReader, modifiedReader io.Reader, recreate bool) error
 }
 
 // PrintingKubeClient implements KubeClient, but simply prints the reader to
 // the given output.
 type PrintingKubeClient struct {
 	Out io.Writer
-}
-
-// APIClient always returns an error.
-//
-// The printing client does not have access to a Kubernetes client at all. So it
-// will always return an error if the client is accessed.
-func (p *PrintingKubeClient) APIClient() (unversioned.Interface, error) {
-	return testclient.NewSimpleFake(), nil
 }
 
 // Create prints the values of what would be created with a real KubeClient.
@@ -180,7 +167,7 @@ func (p *PrintingKubeClient) WatchUntilReady(ns string, r io.Reader) error {
 }
 
 // Update implements KubeClient Update.
-func (p *PrintingKubeClient) Update(ns string, currentReader, modifiedReader io.Reader) error {
+func (p *PrintingKubeClient) Update(ns string, currentReader, modifiedReader io.Reader, recreate bool) error {
 	_, err := io.Copy(p.Out, modifiedReader)
 	return err
 }

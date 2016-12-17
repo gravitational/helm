@@ -40,6 +40,12 @@ version will be specified unless the '--version' flag is set.
 
 To override values in a chart, use either the '--values' flag and pass in a file
 or use the '--set' flag and pass configuration from the command line.
+
+You can specify the '--values'/'-f' flag multiple times. The priority will be given to the
+last (right-most) file specified. For example, if both myvalues.yaml and override.yaml 
+contained a key called 'Test', the value set in override.yaml would take precedence:
+
+	$ helm install -f myvalues.yaml -f override.yaml ./redis
 `
 
 type upgradeCmd struct {
@@ -48,8 +54,9 @@ type upgradeCmd struct {
 	out          io.Writer
 	client       helm.Interface
 	dryRun       bool
+	recreate     bool
 	disableHooks bool
-	valuesFile   string
+	valueFiles   valueFiles
 	values       string
 	verify       bool
 	keyring      string
@@ -84,8 +91,9 @@ func newUpgradeCmd(client helm.Interface, out io.Writer) *cobra.Command {
 	}
 
 	f := cmd.Flags()
-	f.StringVarP(&upgrade.valuesFile, "values", "f", "", "path to a values YAML file")
+	f.VarP(&upgrade.valueFiles, "values", "f", "specify values in a YAML file (can specify multiple)")
 	f.BoolVar(&upgrade.dryRun, "dry-run", false, "simulate an upgrade")
+	f.BoolVar(&upgrade.recreate, "recreate-pods", false, "performs pods restart for the resource if applicable")
 	f.StringVar(&upgrade.values, "set", "", "set values on the command line. Separate values with commas: key1=val1,key2=val2")
 	f.BoolVar(&upgrade.disableHooks, "disable-hooks", false, "disable pre/post upgrade hooks. DEPRECATED. Use no-hooks")
 	f.BoolVar(&upgrade.disableHooks, "no-hooks", false, "disable pre/post upgrade hooks")
@@ -121,7 +129,7 @@ func (u *upgradeCmd) run() error {
 				client:       u.client,
 				out:          u.out,
 				name:         u.release,
-				valuesFile:   u.valuesFile,
+				valueFiles:   u.valueFiles,
 				dryRun:       u.dryRun,
 				verify:       u.verify,
 				disableHooks: u.disableHooks,
@@ -143,6 +151,7 @@ func (u *upgradeCmd) run() error {
 		chartPath,
 		helm.UpdateValueOverrides(rawVals),
 		helm.UpgradeDryRun(u.dryRun),
+		helm.UpgradeRecreate(u.recreate),
 		helm.UpgradeDisableHooks(u.disableHooks))
 	if err != nil {
 		return fmt.Errorf("UPGRADE FAILED: %v", prettyError(err))
@@ -164,16 +173,19 @@ func (u *upgradeCmd) run() error {
 func (u *upgradeCmd) vals() ([]byte, error) {
 	base := map[string]interface{}{}
 
-	// User specified a values file via -f/--values
-	if u.valuesFile != "" {
-		bytes, err := ioutil.ReadFile(u.valuesFile)
+	// User specified a values files via -f/--values
+	for _, filePath := range u.valueFiles {
+		currentMap := map[string]interface{}{}
+		bytes, err := ioutil.ReadFile(filePath)
 		if err != nil {
 			return []byte{}, err
 		}
 
-		if err := yaml.Unmarshal(bytes, &base); err != nil {
-			return []byte{}, fmt.Errorf("failed to parse %s: %s", u.valuesFile, err)
+		if err := yaml.Unmarshal(bytes, &currentMap); err != nil {
+			return []byte{}, fmt.Errorf("failed to parse %s: %s", filePath, err)
 		}
+		// Merge with the previous map
+		base = mergeValues(base, currentMap)
 	}
 
 	if err := strvals.ParseInto(u.values, base); err != nil {

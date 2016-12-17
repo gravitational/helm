@@ -25,12 +25,13 @@ import (
 	"regexp"
 	"strings"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
-
 	"github.com/technosophos/moniker"
 	ctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"k8s.io/kubernetes/pkg/api/unversioned"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	"k8s.io/kubernetes/pkg/client/typed/discovery"
 
 	"k8s.io/helm/pkg/chartutil"
 	"k8s.io/helm/pkg/kube"
@@ -95,13 +96,15 @@ func NewServer() *grpc.Server {
 
 // ReleaseServer implements the server-side gRPC endpoint for the HAPI services.
 type ReleaseServer struct {
-	env *environment.Environment
+	env       *environment.Environment
+	clientset internalclientset.Interface
 }
 
 // NewReleaseServer creates a new release server.
-func NewReleaseServer(env *environment.Environment) *ReleaseServer {
+func NewReleaseServer(env *environment.Environment, clientset internalclientset.Interface) *ReleaseServer {
 	return &ReleaseServer{
-		env: env,
+		env:       env,
+		clientset: clientset,
 	}
 }
 
@@ -337,7 +340,7 @@ func (s *ReleaseServer) performUpdate(originalRelease, updatedRelease *release.R
 		}
 	}
 
-	if err := s.performKubeUpdate(originalRelease, updatedRelease); err != nil {
+	if err := s.performKubeUpdate(originalRelease, updatedRelease, req.Restart); err != nil {
 		log.Printf("warning: Release Upgrade %q failed: %s", updatedRelease.Name, err)
 		originalRelease.Info.Status.Code = release.Status_SUPERSEDED
 		updatedRelease.Info.Status.Code = release.Status_FAILED
@@ -390,11 +393,17 @@ func (s *ReleaseServer) prepareUpdate(req *services.UpdateReleaseRequest) (*rele
 	// If new values were not supplied in the upgrade, re-use the existing values.
 	s.reuseValues(req, currentRelease)
 
+	// Increment revision count. This is passed to templates, and also stored on
+	// the release object.
+	revision := currentRelease.Version + 1
+
 	ts := timeconv.Now()
 	options := chartutil.ReleaseOptions{
 		Name:      req.Name,
 		Time:      ts,
 		Namespace: currentRelease.Namespace,
+		IsUpgrade: true,
+		Revision:  int(revision),
 	}
 
 	valuesToRender, err := chartutil.ToRenderValues(req.Chart, req.Values, options)
@@ -418,7 +427,7 @@ func (s *ReleaseServer) prepareUpdate(req *services.UpdateReleaseRequest) (*rele
 			LastDeployed:  ts,
 			Status:        &release.Status{Code: release.Status_UNKNOWN},
 		},
-		Version:  currentRelease.Version + 1,
+		Version:  revision,
 		Manifest: manifestDoc.String(),
 		Hooks:    hooks,
 	}
@@ -469,7 +478,7 @@ func (s *ReleaseServer) performRollback(currentRelease, targetRelease *release.R
 		}
 	}
 
-	if err := s.performKubeUpdate(currentRelease, targetRelease); err != nil {
+	if err := s.performKubeUpdate(currentRelease, targetRelease, req.Restart); err != nil {
 		log.Printf("warning: Release Rollback %q failed: %s", targetRelease.Name, err)
 		currentRelease.Info.Status.Code = release.Status_SUPERSEDED
 		targetRelease.Info.Status.Code = release.Status_FAILED
@@ -493,11 +502,11 @@ func (s *ReleaseServer) performRollback(currentRelease, targetRelease *release.R
 	return res, nil
 }
 
-func (s *ReleaseServer) performKubeUpdate(currentRelease, targetRelease *release.Release) error {
+func (s *ReleaseServer) performKubeUpdate(currentRelease, targetRelease *release.Release, recreate bool) error {
 	kubeCli := s.env.KubeClient
 	current := bytes.NewBufferString(currentRelease.Manifest)
 	target := bytes.NewBufferString(targetRelease.Manifest)
-	return kubeCli.Update(targetRelease.Namespace, current, target)
+	return kubeCli.Update(targetRelease.Namespace, current, target, recreate)
 }
 
 // prepareRollback finds the previous release and prepares a new release object with
@@ -643,8 +652,15 @@ func (s *ReleaseServer) prepareRelease(req *services.InstallReleaseRequest) (*re
 		return nil, err
 	}
 
+	revision := 1
 	ts := timeconv.Now()
-	options := chartutil.ReleaseOptions{Name: name, Time: ts, Namespace: req.Namespace}
+	options := chartutil.ReleaseOptions{
+		Name:      name,
+		Time:      ts,
+		Namespace: req.Namespace,
+		Revision:  revision,
+		IsInstall: true,
+	}
 	valuesToRender, err := chartutil.ToRenderValues(req.Chart, req.Values, options)
 	if err != nil {
 		return nil, err
@@ -685,7 +701,7 @@ func (s *ReleaseServer) prepareRelease(req *services.InstallReleaseRequest) (*re
 		},
 		Manifest: manifestDoc.String(),
 		Hooks:    hooks,
-		Version:  1,
+		Version:  int32(revision),
 	}
 	if len(notesTxt) > 0 {
 		rel.Info.Status.Notes = notesTxt
@@ -693,15 +709,10 @@ func (s *ReleaseServer) prepareRelease(req *services.InstallReleaseRequest) (*re
 	return rel, nil
 }
 
-func (s *ReleaseServer) getVersionSet() (versionSet, error) {
+func getVersionSet(client discovery.ServerGroupsInterface) (versionSet, error) {
 	defVersions := newVersionSet("v1")
-	cli, err := s.env.KubeClient.APIClient()
-	if err != nil {
-		log.Printf("API Client for Kubernetes is missing: %s.", err)
-		return defVersions, err
-	}
 
-	groups, err := cli.Discovery().ServerGroups()
+	groups, err := client.ServerGroups()
 	if err != nil {
 		return defVersions, err
 	}
@@ -745,7 +756,7 @@ func (s *ReleaseServer) renderResources(ch *chart.Chart, values chartutil.Values
 	// Sort hooks, manifests, and partials. Only hooks and manifests are returned,
 	// as partials are not used after renderer.Render. Empty manifests are also
 	// removed here.
-	vs, err := s.getVersionSet()
+	vs, err := getVersionSet(s.clientset.Discovery())
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("Could not get apiVersions from Kubernetes: %s", err)
 	}
@@ -820,7 +831,7 @@ func (s *ReleaseServer) performRelease(r *release.Release, req *services.Install
 		// so as to append to the old release's history
 		r.Version = old.Version + 1
 
-		if err := s.performKubeUpdate(old, r); err != nil {
+		if err := s.performKubeUpdate(old, r, false); err != nil {
 			log.Printf("warning: Release replace %q failed: %s", r.Name, err)
 			old.Info.Status.Code = release.Status_SUPERSEDED
 			r.Info.Status.Code = release.Status_FAILED
@@ -948,7 +959,7 @@ func (s *ReleaseServer) UninstallRelease(c ctx.Context, req *services.UninstallR
 	}
 
 	log.Printf("uninstall: Deleting %s", req.Name)
-	rel.Info.Status.Code = release.Status_DELETED
+	rel.Info.Status.Code = release.Status_DELETING
 	rel.Info.Deleted = timeconv.Now()
 	res := &services.UninstallReleaseResponse{Release: rel}
 
@@ -958,14 +969,13 @@ func (s *ReleaseServer) UninstallRelease(c ctx.Context, req *services.UninstallR
 		}
 	}
 
-	vs, err := s.getVersionSet()
+	vs, err := getVersionSet(s.clientset.Discovery())
 	if err != nil {
 		return nil, fmt.Errorf("Could not get apiVersions from Kubernetes: %s", err)
 	}
 
-	// From here on out, the release is currently considered to be in Status_DELETED
-	// state. See https://github.com/kubernetes/helm/issues/1511 for a better way
-	// to do this.
+	// From here on out, the release is currently considered to be in Status_DELETING
+	// state.
 	if err := s.env.Releases.Update(rel); err != nil {
 		log.Printf("uninstall: Failed to store updated release: %s", err)
 	}
@@ -980,9 +990,14 @@ func (s *ReleaseServer) UninstallRelease(c ctx.Context, req *services.UninstallR
 		return nil, fmt.Errorf("corrupted release record. You must manually delete the resources: %s", err)
 	}
 
+	filesToKeep, filesToDelete := filterManifestsToKeep(files)
+	if len(filesToKeep) > 0 {
+		res.Info = summarizeKeptManifests(filesToKeep)
+	}
+
 	// Collect the errors, and return them later.
 	es := []string{}
-	for _, file := range files {
+	for _, file := range filesToDelete {
 		b := bytes.NewBufferString(file.content)
 		if err := s.env.KubeClient.Delete(rel.Namespace, b); err != nil {
 			log.Printf("uninstall: Failed deletion of %q: %s", req.Name, err)
@@ -1004,6 +1019,11 @@ func (s *ReleaseServer) UninstallRelease(c ctx.Context, req *services.UninstallR
 		if err := s.purgeReleases(rels...); err != nil {
 			log.Printf("uninstall: Failed to purge the release: %s", err)
 		}
+	}
+
+	rel.Info.Status.Code = release.Status_DELETED
+	if err := s.env.Releases.Update(rel); err != nil {
+		log.Printf("uninstall: Failed to store updated release: %s", err)
 	}
 
 	var errs error

@@ -18,13 +18,16 @@ package main // import "k8s.io/helm/cmd/tiller"
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"k8s.io/helm/pkg/kube"
 	"k8s.io/helm/pkg/proto/hapi/services"
 	"k8s.io/helm/pkg/storage"
 	"k8s.io/helm/pkg/storage/driver"
@@ -69,9 +72,11 @@ var rootCommand = &cobra.Command{
 	Run:   start,
 }
 
-func main() {
+func init() {
 	log.SetFlags(log.Flags() | log.Lshortfile)
+}
 
+func main() {
 	p := rootCommand.PersistentFlags()
 	p.StringVarP(&grpcAddr, "listen", "l", ":44134", "address:port to listen on")
 	p.StringVar(&store, "storage", storageConfigMap, "storage driver to use. One of 'configmap' or 'memory'")
@@ -80,15 +85,16 @@ func main() {
 }
 
 func start(c *cobra.Command, args []string) {
+	clientset, err := kube.New(nil).ClientSet()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot initialize Kubernetes connection: %s", err)
+	}
+
 	switch store {
 	case storageMemory:
 		env.Releases = storage.Init(driver.NewMemory())
 	case storageConfigMap:
-		c, err := env.KubeClient.APIClient()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cannot initialize Kubernetes connection: %s", err)
-		}
-		env.Releases = storage.Init(driver.NewConfigMaps(c.ConfigMaps(environment.TillerNamespace)))
+		env.Releases = storage.Init(driver.NewConfigMaps(clientset.Core().ConfigMaps(namespace())))
 	}
 
 	lstn, err := net.Listen("tcp", grpcAddr)
@@ -108,7 +114,7 @@ func start(c *cobra.Command, args []string) {
 	srvErrCh := make(chan error)
 	probeErrCh := make(chan error)
 	go func() {
-		svc := tiller.NewReleaseServer(env)
+		svc := tiller.NewReleaseServer(env, clientset)
 		services.RegisterReleaseServiceServer(rootServer, svc)
 		if err := rootServer.Serve(lstn); err != nil {
 			srvErrCh <- err
@@ -129,4 +135,20 @@ func start(c *cobra.Command, args []string) {
 	case err := <-probeErrCh:
 		fmt.Fprintf(os.Stderr, "Probes server died: %s\n", err)
 	}
+}
+
+// namespace returns the namespace of tiller
+func namespace() string {
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		return ns
+	}
+
+	// Fall back to the namespace associated with the service account token, if available
+	if data, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+		if ns := strings.TrimSpace(string(data)); len(ns) > 0 {
+			return ns
+		}
+	}
+
+	return environment.DefaultTillerNamespace
 }

@@ -24,7 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 	kerrors "k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/client/unversioned"
+	extensionsclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/extensions/internalversion"
 
 	"k8s.io/helm/cmd/helm/helmpath"
 	"k8s.io/helm/cmd/helm/installer"
@@ -65,10 +65,11 @@ type initCmd struct {
 	image      string
 	clientOnly bool
 	canary     bool
+	namespace  string
 	dryRun     bool
 	out        io.Writer
 	home       helmpath.Home
-	kubeClient unversioned.DeploymentsNamespacer
+	kubeClient extensionsclient.DeploymentsGetter
 }
 
 func newInitCmd(out io.Writer) *cobra.Command {
@@ -84,6 +85,7 @@ func newInitCmd(out io.Writer) *cobra.Command {
 			if len(args) != 0 {
 				return errors.New("This command does not accept arguments")
 			}
+			i.namespace = tillerNamespace
 			i.home = helmpath.Home(homePath())
 			return i.run()
 		},
@@ -101,7 +103,7 @@ func newInitCmd(out io.Writer) *cobra.Command {
 // runInit initializes local config and installs tiller to Kubernetes Cluster
 func (i *initCmd) run() error {
 	if flagDebug {
-		m, err := installer.DeploymentManifest(i.image, i.canary)
+		m, err := installer.DeploymentManifest(i.namespace, i.image, i.canary)
 		if err != nil {
 			return err
 		}
@@ -131,7 +133,7 @@ func (i *initCmd) run() error {
 			}
 			i.kubeClient = c
 		}
-		if err := installer.Install(i.kubeClient, tillerNamespace, i.image, i.canary, flagDebug); err != nil {
+		if err := installer.Install(i.kubeClient, i.namespace, i.image, i.canary, flagDebug); err != nil {
 			if !kerrors.IsAlreadyExists(err) {
 				return fmt.Errorf("error installing: %s", err)
 			}
