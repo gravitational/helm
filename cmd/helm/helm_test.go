@@ -254,7 +254,7 @@ func ensureTestHome(home helmpath.Home, t *testing.T) error {
 
 	repoFile := home.RepositoryFile()
 	if fi, err := os.Stat(repoFile); err != nil {
-		rf := repo.NewRepoFile()
+		rf := repo.NewRepositoryFile()
 		rf.Add(&repo.ChartRepositoryConfig{
 			Name:  "charts",
 			URL:   "http://example.com/foo",
@@ -279,7 +279,7 @@ func ensureTestHome(home helmpath.Home, t *testing.T) error {
 
 	localRepoIndexFile := home.LocalRepository(localRepoIndexFilePath)
 	if fi, err := os.Stat(localRepoIndexFile); err != nil {
-		i := repo.NewIndexFile()
+		i := repo.NewChartRepositoryIndex()
 		if err := i.WriteFile(localRepoIndexFile, 0644); err != nil {
 			return err
 		}

@@ -177,7 +177,7 @@ func ensureDefaultRepos(home helmpath.Home, out io.Writer) error {
 	repoFile := home.RepositoryFile()
 	if fi, err := os.Stat(repoFile); err != nil {
 		fmt.Fprintf(out, "Creating %s \n", repoFile)
-		f := repo.NewRepoFile()
+		f := repo.NewRepositoryFile()
 		sr, err := initStableRepo(home.CacheIndex(stableRepository))
 		if err != nil {
 			return err
@@ -201,7 +201,6 @@ func initStableRepo(cacheFile string) (*repo.ChartRepositoryConfig, error) {
 		URL:   stableRepositoryURL,
 		Cache: cacheFile,
 	}
-
 	r, err := repo.NewChartRepository(&c)
 	if err != nil {
 		return nil, err
@@ -216,7 +215,7 @@ func initStableRepo(cacheFile string) (*repo.ChartRepositoryConfig, error) {
 
 func initLocalRepo(indexFile, cacheFile string) (*repo.ChartRepositoryConfig, error) {
 	if fi, err := os.Stat(indexFile); err != nil {
-		i := repo.NewIndexFile()
+		i := repo.NewChartRepositoryIndex()
 		if err := i.WriteFile(indexFile, 0644); err != nil {
 			return nil, err
 		}

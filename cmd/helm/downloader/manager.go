@@ -34,6 +34,7 @@ import (
 	"k8s.io/helm/pkg/chartutil"
 	"k8s.io/helm/pkg/proto/hapi/chart"
 	"k8s.io/helm/pkg/repo"
+	"k8s.io/helm/pkg/urlutil"
 )
 
 // Manager handles the lifecycle of fetching, resolving, and storing dependencies.
@@ -225,7 +226,7 @@ func (m *Manager) hasAllRepos(deps []*chartutil.Dependency) error {
 			found = true
 		} else {
 			for _, repo := range repos {
-				if urlsAreEqual(repo.URL, strings.TrimSuffix(dd.Repository, "/")) {
+				if urlutil.URLAreEqual(repo.URL, strings.TrimSuffix(dd.Repository, "/")) {
 					found = true
 				}
 			}
@@ -257,7 +258,7 @@ func (m *Manager) getRepoNames(deps []*chartutil.Dependency) (map[string]string,
 		found := false
 
 		for _, repo := range repos {
-			if urlsAreEqual(repo.URL, dd.Repository) {
+			if urlutil.URLAreEqual(repo.URL, dd.Repository) {
 				found = true
 				reposMap[dd.Name] = repo.Name
 				break
@@ -306,31 +307,6 @@ func (m *Manager) parallelRepoUpdate(repos []*repo.ChartRepositoryConfig) {
 	fmt.Fprintln(out, "Update Complete. ⎈Happy Helming!⎈")
 }
 
-// urlsAreEqual normalizes two URLs and then compares for equality.
-//
-// TODO: This and the urlJoin functions should really be moved to a 'urlutil' package.
-func urlsAreEqual(a, b string) bool {
-	au, err := url.Parse(a)
-	if err != nil {
-		a = filepath.Clean(a)
-		b = filepath.Clean(b)
-		// If urls are paths, return true only if they are an exact match
-		return a == b
-	}
-	bu, err := url.Parse(b)
-	if err != nil {
-		return false
-	}
-
-	for _, u := range []*url.URL{au, bu} {
-		if u.Path == "" {
-			u.Path = "/"
-		}
-		u.Path = filepath.Clean(u.Path)
-	}
-	return au.String() == bu.String()
-}
-
 // findChartURL searches the cache of repo data for a chart that has the name and the repoURL specified.
 //
 // 'name' is the name of the chart. Version is an exact semver, or an empty string. If empty, the
@@ -341,7 +317,7 @@ func urlsAreEqual(a, b string) bool {
 // If it finds a URL that is "relative", it will prepend the repoURL.
 func findChartURL(name, version, repoURL string, repos map[string]*repo.ChartRepository) (string, error) {
 	for _, cr := range repos {
-		if urlsAreEqual(repoURL, cr.Config.URL) {
+		if urlutil.URLAreEqual(repoURL, cr.Config.URL) {
 			entry, err := findEntryByName(name, cr)
 			if err != nil {
 				return "", err
@@ -433,7 +409,7 @@ func (m *Manager) loadChartRepositories() (map[string]*repo.ChartRepository, err
 	for _, re := range rf.Repositories {
 		lname := re.Name
 		cacheindex := m.HelmHome.CacheIndex(lname)
-		index, err := repo.LoadIndexFile(cacheindex)
+		index, err := repo.NewChartRepositoryIndexFromFile(cacheindex)
 		if err != nil {
 			return indices, err
 		}

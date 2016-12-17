@@ -113,7 +113,7 @@ func (s *Server) CopyCharts(origin string) ([]string, error) {
 // CreateIndex will read docroot and generate an index.yaml file.
 func (s *Server) CreateIndex() error {
 	// generate the index
-	index, err := repo.IndexDirectory(s.docroot, s.URL())
+	index, err := repo.NewChartRepositoryIndexFromDirectory(s.docroot, s.URL())
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func (s *Server) LinkIndices() error {
 
 // setTestingRepository sets up a testing repository.yaml with only the given name/URL.
 func setTestingRepository(helmhome, name, url string) error {
-	rf := repo.NewRepoFile()
+	rf := repo.NewRepositoryFile()
 	rf.Add(&repo.ChartRepositoryConfig{Name: name, URL: url})
 	os.MkdirAll(filepath.Join(helmhome, "repository", name), 0755)
 	dest := filepath.Join(helmhome, "repository/repositories.yaml")

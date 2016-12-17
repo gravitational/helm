@@ -17,148 +17,126 @@ limitations under the License.
 package repo // import "k8s.io/helm/pkg/repo"
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
-	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
+	"time"
 
 	"github.com/ghodss/yaml"
-
-	"k8s.io/helm/pkg/chartutil"
-	"k8s.io/helm/pkg/provenance"
-	"k8s.io/helm/pkg/tlsutil"
 )
 
-// ChartRepositoryConfig represents a collection of parameters for chart repository
-type ChartRepositoryConfig struct {
-	Name     string `json:"name"`
-	Cache    string `json:"cache"`
-	URL      string `json:"url"`
-	CertFile string `json:"certFile"`
-	KeyFile  string `json:"keyFile"`
-	CAFile   string `json:"caFile"`
+// ErrRepoOutOfDate indicates that the repository file is out of date, but
+// is fixable.
+var ErrRepoOutOfDate = errors.New("repository file is out of date")
+
+// RepositoryFile represents the repositories.yaml file in $HELM_HOME
+type RepositoryFile struct {
+	APIVersion   string                   `json:"apiVersion"`
+	Generated    time.Time                `json:"generated"`
+	Repositories []*ChartRepositoryConfig `json:"repositories"`
 }
 
-// ChartRepository represents a chart repository
-type ChartRepository struct {
-	Config     *ChartRepositoryConfig
-	ChartPaths []string
-	IndexFile  *IndexFile
-	Client     *http.Client
-}
-
-// NewChartRepository constructs ChartRepository
-func NewChartRepository(cfg *ChartRepositoryConfig) (*ChartRepository, error) {
-	client := http.DefaultClient
-	if cfg.CertFile != "" && cfg.KeyFile != "" && cfg.CAFile != "" {
-		tlsConf, err := tlsutil.NewClientTLS(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("can't create TLS config for client: %s", err.Error())
-		}
-		tlsConf.BuildNameToCertificate()
-		client.Transport = &http.Transport{
-			TLSClientConfig: tlsConf,
-		}
-	}
-
-	return &ChartRepository{
-		Config:    cfg,
-		IndexFile: NewIndexFile(),
-		Client:    client,
-	}, nil
-}
-
-// Load loads a directory of charts as if it were a repository.
+// NewRepositoryFile generates an empty repositories file.
 //
-// It requires the presence of an index.yaml file in the directory.
-func (r *ChartRepository) Load() error {
-	dirInfo, err := os.Stat(r.Config.Name)
-	if err != nil {
-		return err
+// Generated and APIVersion are automatically set.
+func NewRepositoryFile() *RepositoryFile {
+	return &RepositoryFile{
+		APIVersion:   APIVersionV1,
+		Generated:    time.Now(),
+		Repositories: []*ChartRepositoryConfig{},
 	}
-	if !dirInfo.IsDir() {
-		return fmt.Errorf("%q is not a directory", r.Config.Name)
+}
+
+// LoadRepositoriesFile takes a file at the given path and returns a RepositoryFile object
+//
+// If this returns ErrRepoOutOfDate, it also returns a recovered RepositoryFile that
+// can be saved as a replacement to the out of date file.
+func LoadRepositoriesFile(path string) (*RepositoryFile, error) {
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
 
-	// FIXME: Why are we recursively walking directories?
-	// FIXME: Why are we not reading the repositories.yaml to figure out
-	// what repos to use?
-	filepath.Walk(r.Config.Name, func(path string, f os.FileInfo, err error) error {
-		if !f.IsDir() {
-			if strings.Contains(f.Name(), "-index.yaml") {
-				i, err := LoadIndexFile(path)
-				if err != nil {
-					return nil
-				}
-				r.IndexFile = i
-			} else if strings.HasSuffix(f.Name(), ".tgz") {
-				r.ChartPaths = append(r.ChartPaths, path)
+	r := &RepositoryFile{}
+	err = yaml.Unmarshal(b, r)
+	if err != nil {
+		return nil, err
+	}
+
+	// File is either corrupt, or is from before v2.0.0-Alpha.5
+	if r.APIVersion == "" {
+		m := map[string]string{}
+		if err = yaml.Unmarshal(b, &m); err != nil {
+			return nil, err
+		}
+		r := NewRepositoryFile()
+		for k, v := range m {
+			r.Add(&ChartRepositoryConfig{
+				Name:  k,
+				URL:   v,
+				Cache: fmt.Sprintf("%s-index.yaml", k),
+			})
+		}
+		return r, ErrRepoOutOfDate
+	}
+
+	return r, nil
+}
+
+// Add adds one or more repo entries to a repo file.
+func (r *RepositoryFile) Add(re ...*ChartRepositoryConfig) {
+	r.Repositories = append(r.Repositories, re...)
+}
+
+// Update attempts to replace one or more repo entries in a repo file. If an
+// entry with the same name doesn't exist in the repo file it will add it.
+func (r *RepositoryFile) Update(re ...*ChartRepositoryConfig) {
+	for _, target := range re {
+		found := false
+		for j, repo := range r.Repositories {
+			if repo.Name == target.Name {
+				r.Repositories[j] = target
+				found = true
+				break
 			}
 		}
-		return nil
-	})
-	return nil
-}
-
-// DownloadIndexFile fetches the index from a repository.
-func (r *ChartRepository) DownloadIndexFile() error {
-	var indexURL string
-
-	indexURL = strings.TrimSuffix(r.Config.URL, "/") + "/index.yaml"
-	resp, err := r.Client.Get(indexURL)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	index, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	if _, err := LoadIndex(index); err != nil {
-		return err
-	}
-
-	return ioutil.WriteFile(r.Config.Cache, index, 0644)
-}
-
-// Index generates an index for the chart repository and writes an index.yaml file.
-func (r *ChartRepository) Index() error {
-	err := r.generateIndex()
-	if err != nil {
-		return err
-	}
-	return r.saveIndexFile()
-}
-
-func (r *ChartRepository) saveIndexFile() error {
-	index, err := yaml.Marshal(r.IndexFile)
-	if err != nil {
-		return err
-	}
-	return ioutil.WriteFile(filepath.Join(r.Config.Name, indexPath), index, 0644)
-}
-
-func (r *ChartRepository) generateIndex() error {
-	for _, path := range r.ChartPaths {
-		ch, err := chartutil.Load(path)
-		if err != nil {
-			return err
+		if !found {
+			r.Add(target)
 		}
-
-		digest, err := provenance.DigestFile(path)
-		if err != nil {
-			return err
-		}
-
-		if !r.IndexFile.Has(ch.Metadata.Name, ch.Metadata.Version) {
-			r.IndexFile.Add(ch.Metadata, path, r.Config.URL, digest)
-		}
-		// TODO: If a chart exists, but has a different Digest, should we error?
 	}
-	r.IndexFile.SortEntries()
-	return nil
+}
+
+// Has returns true if the given name is already a repository name.
+func (r *RepositoryFile) Has(name string) bool {
+	for _, rf := range r.Repositories {
+		if rf.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Remove removes the entry from the list of repositories.
+func (r *RepositoryFile) Remove(name string) bool {
+	cp := []*ChartRepositoryConfig{}
+	found := false
+	for _, rf := range r.Repositories {
+		if rf.Name == name {
+			found = true
+			continue
+		}
+		cp = append(cp, rf)
+	}
+	r.Repositories = cp
+	return found
+}
+
+// WriteFile writes a repositories file to the given path.
+func (r *RepositoryFile) WriteFile(path string, perm os.FileMode) error {
+	data, err := yaml.Marshal(r)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(path, data, perm)
 }
