@@ -45,15 +45,17 @@ result in an error, and the chart will not be saved locally.
 `
 
 type fetchCmd struct {
-	untar       bool
-	untardir    string
-	chartRef    string
-	destdir     string
-	version     string
+	untar    bool
+	untardir string
+	chartRef string
+	destdir  string
+	version  string
+
 	verify      bool
 	verifyLater bool
 	keyring     string
-	out         io.Writer
+
+	out io.Writer
 }
 
 func newFetchCmd(out io.Writer) *cobra.Command {
@@ -85,6 +87,7 @@ func newFetchCmd(out io.Writer) *cobra.Command {
 	f.StringVar(&fch.version, "version", "", "specific version of a chart. Without this, the latest version is fetched")
 	f.StringVar(&fch.keyring, "keyring", defaultKeyring(), "keyring containing public keys")
 	f.StringVarP(&fch.destdir, "destination", "d", ".", "location to write the chart. If this and tardir are specified, tardir is appended to this")
+
 	return cmd
 }
 

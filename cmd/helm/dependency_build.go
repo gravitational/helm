@@ -36,11 +36,11 @@ of 'helm dependency update'.
 `
 
 type dependencyBuildCmd struct {
+	out       io.Writer
 	chartpath string
 	verify    bool
 	keyring   string
 	helmhome  helmpath.Home
-	out       io.Writer
 }
 
 func newDependencyBuildCmd(out io.Writer) *cobra.Command {
@@ -66,6 +66,7 @@ func newDependencyBuildCmd(out io.Writer) *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&dbc.verify, "verify", false, "verify the packages against signatures")
 	f.StringVar(&dbc.keyring, "keyring", defaultKeyring(), "keyring containing public keys")
+
 	return cmd
 }
 

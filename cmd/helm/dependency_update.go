@@ -36,11 +36,11 @@ rebuild the requirements to an exact version.
 
 // dependencyUpdateCmd describes a 'helm dependency update'
 type dependencyUpdateCmd struct {
+	out       io.Writer
 	chartpath string
 	helmhome  helmpath.Home
 	verify    bool
 	keyring   string
-	out       io.Writer
 }
 
 // newDependencyUpdateCmd creates a new dependency update command.
@@ -75,6 +75,7 @@ func newDependencyUpdateCmd(out io.Writer) *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&duc.verify, "verify", false, "verify the packages against signatures")
 	f.StringVar(&duc.keyring, "keyring", defaultKeyring(), "keyring containing public keys")
+
 	return cmd
 }
 
