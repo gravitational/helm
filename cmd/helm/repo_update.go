@@ -75,9 +75,11 @@ func (u *repoUpdateCmd) run() error {
 	}
 	var repos []*repo.ChartRepository
 	for _, cfg := range f.Repositories {
-		if r, err := repo.NewChartRepository(cfg); err != nil {
-			repos = append(repos, r)
+		r, err := repo.NewChartRepository(cfg)
+		if err != nil {
+			return err
 		}
+		repos = append(repos, r)
 	}
 
 	u.update(repos, u.out)

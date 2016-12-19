@@ -63,39 +63,40 @@ func TestUpdateCmd(t *testing.T) {
 }
 
 func TestUpdateCharts(t *testing.T) {
-	srv, thome, err := repotest.NewTempServer("testdata/testserver/*.*")
+	ts, thome, err := repotest.NewTempServer("testdata/testserver/*.*")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	oldhome := homePath()
 	helmHome = thome
+	hh := helmpath.Home(thome)
 	defer func() {
-		srv.Stop()
+		ts.Stop()
 		helmHome = oldhome
 		os.Remove(thome)
 	}()
-	if err := ensureTestHome(helmpath.Home(thome), t); err != nil {
+	if err := ensureTestHome(hh, t); err != nil {
 		t.Fatal(err)
 	}
 
-	buf := bytes.NewBuffer(nil)
 	r, err := repo.NewChartRepository(&repo.ChartRepositoryConfig{
-		Name: "charts",
-		URL:  srv.URL(),
+		Name:  "charts",
+		URL:   ts.URL(),
+		Cache: hh.CacheIndex("charts"),
 	})
 	if err != nil {
 		t.Error(err)
 	}
-	repos := []*repo.ChartRepository{r}
 
-	updateCharts(repos, buf)
+	b := bytes.NewBuffer(nil)
+	updateCharts([]*repo.ChartRepository{r}, b)
 
-	got := buf.String()
+	got := b.String()
 	if strings.Contains(got, "Unable to get an update") {
 		t.Errorf("Failed to get a repo: %q", got)
 	}
 	if !strings.Contains(got, "Update Complete.") {
-		t.Errorf("Update was not successful")
+		t.Error("Update was not successful")
 	}
 }
