@@ -25,6 +25,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/Masterminds/semver"
 	"github.com/ghodss/yaml"
@@ -283,28 +284,35 @@ func (m *Manager) UpdateRepositories() error {
 	repos := rf.Repositories
 	if len(repos) > 0 {
 		// This prints warnings straight to out.
-		m.parallelRepoUpdate(repos)
+		if err := m.parallelRepoUpdate(repos); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (m *Manager) parallelRepoUpdate(repos []*repo.ChartRepositoryConfig) {
+func (m *Manager) parallelRepoUpdate(repos []*repo.ChartRepositoryConfig) error {
 	out := m.Out
-	//fmt.Fprintln(out, "Hang tight while we grab the latest from your chart repositories...")
-	//var wg sync.WaitGroup
-	//for _, re := range repos {
-	//wg.Add(1)
-	//go func(n, u string) {
-	//if err := repo.DownloadIndexFile(n, u, m.HelmHome.CacheIndex(n), http.DefaultClient); err != nil {
-	//fmt.Fprintf(out, "...Unable to get an update from the %q chart repository (%s):\n\t%s\n", n, u, err)
-	//} else {
-	//fmt.Fprintf(out, "...Successfully got an update from the %q chart repository\n", n)
-	//}
-	//wg.Done()
-	//}(re.Name, re.URL)
-	//}
-	//wg.Wait()
+	fmt.Fprintln(out, "Hang tight while we grab the latest from your chart repositories...")
+	var wg sync.WaitGroup
+	for _, c := range repos {
+		r, err := repo.NewChartRepository(c)
+		if err != nil {
+			return err
+		}
+		wg.Add(1)
+		go func(r *repo.ChartRepository) {
+			if err := r.DownloadIndexFile(); err != nil {
+				fmt.Fprintf(out, "...Unable to get an update from the %q chart repository (%s):\n\t%s\n", r.Config.Name, r.Config.URL, err)
+			} else {
+				fmt.Fprintf(out, "...Successfully got an update from the %q chart repository\n", r.Config.Name)
+			}
+			wg.Done()
+		}(r)
+	}
+	wg.Wait()
 	fmt.Fprintln(out, "Update Complete. ⎈Happy Helming!⎈")
+	return nil
 }
 
 // findChartURL searches the cache of repo data for a chart that has the name and the repoURL specified.

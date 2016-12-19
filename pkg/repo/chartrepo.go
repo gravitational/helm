@@ -64,8 +64,9 @@ func NewChartRepository(cfg *ChartRepositoryConfig) (*ChartRepository, error) {
 	}
 
 	return &ChartRepository{
-		Config: cfg,
-		Client: client,
+		Config:    cfg,
+		IndexFile: NewChartRepositoryIndex(),
+		Client:    client,
 	}, nil
 }
 
