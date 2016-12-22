@@ -51,16 +51,20 @@ type ChartRepository struct {
 
 // NewChartRepository constructs ChartRepository
 func NewChartRepository(cfg *ChartRepositoryConfig) (*ChartRepository, error) {
-	client := http.DefaultClient
+	var client *http.Client
 	if cfg.CertFile != "" && cfg.KeyFile != "" && cfg.CAFile != "" {
 		tlsConf, err := tlsutil.NewClientTLS(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("can't create TLS config for client: %s", err.Error())
 		}
 		tlsConf.BuildNameToCertificate()
-		client.Transport = &http.Transport{
-			TLSClientConfig: tlsConf,
+		client = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: tlsConf,
+			},
 		}
+	} else {
+		client = http.DefaultClient
 	}
 
 	return &ChartRepository{
