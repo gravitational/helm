@@ -42,7 +42,7 @@ To override values in a chart, use either the '--values' flag and pass in a file
 or use the '--set' flag and pass configuration from the command line.
 
 You can specify the '--values'/'-f' flag multiple times. The priority will be given to the
-last (right-most) file specified. For example, if both myvalues.yaml and override.yaml 
+last (right-most) file specified. For example, if both myvalues.yaml and override.yaml
 contained a key called 'Test', the value set in override.yaml would take precedence:
 
 	$ helm install -f myvalues.yaml -f override.yaml ./redis
@@ -63,6 +63,7 @@ type upgradeCmd struct {
 	install      bool
 	namespace    string
 	version      string
+	timeout      int64
 }
 
 func newUpgradeCmd(client helm.Interface, out io.Writer) *cobra.Command {
@@ -102,6 +103,7 @@ func newUpgradeCmd(client helm.Interface, out io.Writer) *cobra.Command {
 	f.BoolVarP(&upgrade.install, "install", "i", false, "if a release by this name doesn't already exist, run an install")
 	f.StringVar(&upgrade.namespace, "namespace", "default", "namespace to install the release into (only used if --install is set)")
 	f.StringVar(&upgrade.version, "version", "", "specify the exact chart version to use. If this is not specified, the latest version is used")
+	f.Int64Var(&upgrade.timeout, "timeout", 300, "time in seconds to wait for any individual kubernetes operation (like Jobs for hooks)")
 
 	f.MarkDeprecated("disable-hooks", "use --no-hooks instead")
 
@@ -136,6 +138,7 @@ func (u *upgradeCmd) run() error {
 				keyring:      u.keyring,
 				values:       u.values,
 				namespace:    u.namespace,
+				timeout:      u.timeout,
 			}
 			return ic.run()
 		}
@@ -146,19 +149,23 @@ func (u *upgradeCmd) run() error {
 		return err
 	}
 
-	_, err = u.client.UpdateRelease(
+	resp, err := u.client.UpdateRelease(
 		u.release,
 		chartPath,
 		helm.UpdateValueOverrides(rawVals),
 		helm.UpgradeDryRun(u.dryRun),
 		helm.UpgradeRecreate(u.recreate),
-		helm.UpgradeDisableHooks(u.disableHooks))
+		helm.UpgradeDisableHooks(u.disableHooks),
+		helm.UpgradeTimeout(u.timeout))
 	if err != nil {
 		return fmt.Errorf("UPGRADE FAILED: %v", prettyError(err))
 	}
 
-	success := u.release + " has been upgraded. Happy Helming!\n"
-	fmt.Fprintf(u.out, success)
+	if flagDebug {
+		printRelease(u.out, resp.Release)
+	}
+
+	fmt.Fprintf(u.out, "Release %q has been upgraded. Happy Helming!\n", u.release)
 
 	// Print the status like status command does
 	status, err := u.client.ReleaseStatus(u.release)

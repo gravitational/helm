@@ -27,8 +27,6 @@ import (
 
 	"github.com/technosophos/moniker"
 	ctx "golang.org/x/net/context"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	"k8s.io/kubernetes/pkg/client/typed/discovery"
@@ -65,8 +63,6 @@ var (
 	errMissingRelease = errors.New("no release provided")
 	// errInvalidRevision indicates that an invalid release revision number was provided.
 	errInvalidRevision = errors.New("invalid release revision")
-	// errIncompatibleVersion indicates incompatible client/server versions.
-	errIncompatibleVersion = errors.New("client version is incompatible")
 )
 
 // ListDefaultLimit is the default limit for number of items returned in a list.
@@ -83,17 +79,6 @@ var ListDefaultLimit int64 = 512
 // prevents an empty string from matching.
 var ValidName = regexp.MustCompile("^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])+$")
 
-// maxMsgSize use 10MB as the default message size limit.
-// grpc library default is 4MB
-var maxMsgSize = 1024 * 1024 * 10
-
-// NewServer creates a new grpc server.
-func NewServer() *grpc.Server {
-	return grpc.NewServer(
-		grpc.MaxMsgSize(maxMsgSize),
-	)
-}
-
 // ReleaseServer implements the server-side gRPC endpoint for the HAPI services.
 type ReleaseServer struct {
 	env       *environment.Environment
@@ -108,21 +93,8 @@ func NewReleaseServer(env *environment.Environment, clientset internalclientset.
 	}
 }
 
-func getVersion(c ctx.Context) string {
-	if md, ok := metadata.FromContext(c); ok {
-		if v, ok := md["x-helm-api-client"]; ok {
-			return v[0]
-		}
-	}
-	return ""
-}
-
 // ListReleases lists the releases found by the server.
 func (s *ReleaseServer) ListReleases(req *services.ListReleasesRequest, stream services.ReleaseService_ListReleasesServer) error {
-	if !checkClientVersion(stream.Context()) {
-		return errIncompatibleVersion
-	}
-
 	if len(req.StatusCodes) == 0 {
 		req.StatusCodes = []release.Status_Code{release.Status_DEPLOYED}
 	}
@@ -226,17 +198,8 @@ func (s *ReleaseServer) GetVersion(c ctx.Context, req *services.GetVersionReques
 	return &services.GetVersionResponse{Version: v}, nil
 }
 
-func checkClientVersion(c ctx.Context) bool {
-	v := getVersion(c)
-	return version.IsCompatible(v, version.Version)
-}
-
 // GetReleaseStatus gets the status information for a named release.
 func (s *ReleaseServer) GetReleaseStatus(c ctx.Context, req *services.GetReleaseStatusRequest) (*services.GetReleaseStatusResponse, error) {
-	if !checkClientVersion(c) {
-		return nil, errIncompatibleVersion
-	}
-
 	if !ValidName.MatchString(req.Name) {
 		return nil, errMissingRelease
 	}
@@ -283,10 +246,6 @@ func (s *ReleaseServer) GetReleaseStatus(c ctx.Context, req *services.GetRelease
 
 // GetReleaseContent gets all of the stored information for the given release.
 func (s *ReleaseServer) GetReleaseContent(c ctx.Context, req *services.GetReleaseContentRequest) (*services.GetReleaseContentResponse, error) {
-	if !checkClientVersion(c) {
-		return nil, errIncompatibleVersion
-	}
-
 	if !ValidName.MatchString(req.Name) {
 		return nil, errMissingRelease
 	}
@@ -302,10 +261,6 @@ func (s *ReleaseServer) GetReleaseContent(c ctx.Context, req *services.GetReleas
 
 // UpdateRelease takes an existing release and new information, and upgrades the release.
 func (s *ReleaseServer) UpdateRelease(c ctx.Context, req *services.UpdateReleaseRequest) (*services.UpdateReleaseResponse, error) {
-	if !checkClientVersion(c) {
-		return nil, errIncompatibleVersion
-	}
-
 	currentRelease, updatedRelease, err := s.prepareUpdate(req)
 	if err != nil {
 		return nil, err
@@ -333,9 +288,9 @@ func (s *ReleaseServer) performUpdate(originalRelease, updatedRelease *release.R
 		return res, nil
 	}
 
-	// pre-ugrade hooks
+	// pre-upgrade hooks
 	if !req.DisableHooks {
-		if err := s.execHook(updatedRelease.Hooks, updatedRelease.Name, updatedRelease.Namespace, preUpgrade); err != nil {
+		if err := s.execHook(updatedRelease.Hooks, updatedRelease.Name, updatedRelease.Namespace, preUpgrade, req.Timeout); err != nil {
 			return res, err
 		}
 	}
@@ -351,7 +306,7 @@ func (s *ReleaseServer) performUpdate(originalRelease, updatedRelease *release.R
 
 	// post-upgrade hooks
 	if !req.DisableHooks {
-		if err := s.execHook(updatedRelease.Hooks, updatedRelease.Name, updatedRelease.Namespace, postUpgrade); err != nil {
+		if err := s.execHook(updatedRelease.Hooks, updatedRelease.Name, updatedRelease.Namespace, postUpgrade, req.Timeout); err != nil {
 			return res, err
 		}
 	}
@@ -368,7 +323,7 @@ func (s *ReleaseServer) performUpdate(originalRelease, updatedRelease *release.R
 //
 // If the request already has values, or if there are no values in the current release, this does nothing.
 func (s *ReleaseServer) reuseValues(req *services.UpdateReleaseRequest, current *release.Release) {
-	if (req.Values == nil || req.Values.Raw == "") && current.Config != nil && current.Config.Raw != "" {
+	if (req.Values == nil || req.Values.Raw == "" || req.Values.Raw == "{}\n") && current.Config != nil && current.Config.Raw != "" && current.Config.Raw != "{}\n" {
 		log.Printf("Copying values from %s (v%d) to new release.", current.Name, current.Version)
 		req.Values = current.Config
 	}
@@ -435,15 +390,12 @@ func (s *ReleaseServer) prepareUpdate(req *services.UpdateReleaseRequest) (*rele
 	if len(notesTxt) > 0 {
 		updatedRelease.Info.Status.Notes = notesTxt
 	}
-	return currentRelease, updatedRelease, nil
+	err = validateManifest(s.env.KubeClient, currentRelease.Namespace, manifestDoc.Bytes())
+	return currentRelease, updatedRelease, err
 }
 
 // RollbackRelease rolls back to a previous version of the given release.
 func (s *ReleaseServer) RollbackRelease(c ctx.Context, req *services.RollbackReleaseRequest) (*services.RollbackReleaseResponse, error) {
-	if !checkClientVersion(c) {
-		return nil, errIncompatibleVersion
-	}
-
 	currentRelease, targetRelease, err := s.prepareRollback(req)
 	if err != nil {
 		return nil, err
@@ -473,7 +425,7 @@ func (s *ReleaseServer) performRollback(currentRelease, targetRelease *release.R
 
 	// pre-rollback hooks
 	if !req.DisableHooks {
-		if err := s.execHook(targetRelease.Hooks, targetRelease.Name, targetRelease.Namespace, preRollback); err != nil {
+		if err := s.execHook(targetRelease.Hooks, targetRelease.Name, targetRelease.Namespace, preRollback, req.Timeout); err != nil {
 			return res, err
 		}
 	}
@@ -489,7 +441,7 @@ func (s *ReleaseServer) performRollback(currentRelease, targetRelease *release.R
 
 	// post-rollback hooks
 	if !req.DisableHooks {
-		if err := s.execHook(targetRelease.Hooks, targetRelease.Name, targetRelease.Namespace, postRollback); err != nil {
+		if err := s.execHook(targetRelease.Hooks, targetRelease.Name, targetRelease.Namespace, postRollback, req.Timeout); err != nil {
 			return res, err
 		}
 	}
@@ -617,10 +569,6 @@ func (s *ReleaseServer) engine(ch *chart.Chart) environment.Engine {
 
 // InstallRelease installs a release and stores the release record.
 func (s *ReleaseServer) InstallRelease(c ctx.Context, req *services.InstallReleaseRequest) (*services.InstallReleaseResponse, error) {
-	if !checkClientVersion(c) {
-		return nil, errIncompatibleVersion
-	}
-
 	rel, err := s.prepareRelease(req)
 	if err != nil {
 		log.Printf("Failed install prepare step: %s", err)
@@ -706,7 +654,9 @@ func (s *ReleaseServer) prepareRelease(req *services.InstallReleaseRequest) (*re
 	if len(notesTxt) > 0 {
 		rel.Info.Status.Notes = notesTxt
 	}
-	return rel, nil
+
+	err = validateManifest(s.env.KubeClient, req.Namespace, manifestDoc.Bytes())
+	return rel, err
 }
 
 func getVersionSet(client discovery.ServerGroupsInterface) (versionSet, error) {
@@ -809,7 +759,7 @@ func (s *ReleaseServer) performRelease(r *release.Release, req *services.Install
 
 	// pre-install hooks
 	if !req.DisableHooks {
-		if err := s.execHook(r.Hooks, r.Name, r.Namespace, preInstall); err != nil {
+		if err := s.execHook(r.Hooks, r.Name, r.Namespace, preInstall, req.Timeout); err != nil {
 			return res, err
 		}
 	}
@@ -854,7 +804,7 @@ func (s *ReleaseServer) performRelease(r *release.Release, req *services.Install
 
 	// post-install hooks
 	if !req.DisableHooks {
-		if err := s.execHook(r.Hooks, r.Name, r.Namespace, postInstall); err != nil {
+		if err := s.execHook(r.Hooks, r.Name, r.Namespace, postInstall, req.Timeout); err != nil {
 			log.Printf("warning: Release %q failed post-install: %s", r.Name, err)
 			r.Info.Status.Code = release.Status_FAILED
 			s.recordRelease(r, false)
@@ -875,7 +825,7 @@ func (s *ReleaseServer) performRelease(r *release.Release, req *services.Install
 	return res, nil
 }
 
-func (s *ReleaseServer) execHook(hs []*release.Hook, name, namespace, hook string) error {
+func (s *ReleaseServer) execHook(hs []*release.Hook, name, namespace, hook string, timeout int64) error {
 	kubeCli := s.env.KubeClient
 	code, ok := events[hook]
 	if !ok {
@@ -903,7 +853,7 @@ func (s *ReleaseServer) execHook(hs []*release.Hook, name, namespace, hook strin
 		// No way to rewind a bytes.Buffer()?
 		b.Reset()
 		b.WriteString(h.Manifest)
-		if err := kubeCli.WatchUntilReady(namespace, b); err != nil {
+		if err := kubeCli.WatchUntilReady(namespace, b, timeout); err != nil {
 			log.Printf("warning: Release %q pre-install %s could not complete: %s", name, h.Path, err)
 			return err
 		}
@@ -924,10 +874,6 @@ func (s *ReleaseServer) purgeReleases(rels ...*release.Release) error {
 
 // UninstallRelease deletes all of the resources associated with this release, and marks the release DELETED.
 func (s *ReleaseServer) UninstallRelease(c ctx.Context, req *services.UninstallReleaseRequest) (*services.UninstallReleaseResponse, error) {
-	if !checkClientVersion(c) {
-		return nil, errIncompatibleVersion
-	}
-
 	if !ValidName.MatchString(req.Name) {
 		log.Printf("uninstall: Release not found: %s", req.Name)
 		return nil, errMissingRelease
@@ -964,7 +910,7 @@ func (s *ReleaseServer) UninstallRelease(c ctx.Context, req *services.UninstallR
 	res := &services.UninstallReleaseResponse{Release: rel}
 
 	if !req.DisableHooks {
-		if err := s.execHook(rel.Hooks, rel.Name, rel.Namespace, preDelete); err != nil {
+		if err := s.execHook(rel.Hooks, rel.Name, rel.Namespace, preDelete, req.Timeout); err != nil {
 			return res, err
 		}
 	}
@@ -1010,7 +956,7 @@ func (s *ReleaseServer) UninstallRelease(c ctx.Context, req *services.UninstallR
 	}
 
 	if !req.DisableHooks {
-		if err := s.execHook(rel.Hooks, rel.Name, rel.Namespace, postDelete); err != nil {
+		if err := s.execHook(rel.Hooks, rel.Name, rel.Namespace, postDelete, req.Timeout); err != nil {
 			es = append(es, err.Error())
 		}
 	}
@@ -1047,4 +993,10 @@ func splitManifests(bigfile string) map[string]string {
 		res[fmt.Sprintf(tpl, i)] = d
 	}
 	return res
+}
+
+func validateManifest(c environment.KubeClient, ns string, manifest []byte) error {
+	r := bytes.NewReader(manifest)
+	_, err := c.Build(ns, r)
+	return err
 }
