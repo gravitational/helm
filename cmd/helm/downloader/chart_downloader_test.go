@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"k8s.io/helm/cmd/helm/helmpath"
+	"k8s.io/helm/pkg/repo"
 	"k8s.io/helm/pkg/repo/repotest"
 )
 
@@ -51,7 +52,7 @@ func TestResolveChartRef(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		u, err := c.ResolveChartVersion(tt.ref, tt.version)
+		u, _, err := c.ResolveChartVersion(tt.ref, tt.version)
 		if err != nil {
 			if tt.fail {
 				continue
@@ -84,7 +85,7 @@ func TestDownload(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := download(srv.URL)
+	got, err := download(srv.URL, http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestDownload(t *testing.T) {
 
 	u, _ := url.ParseRequestURI(basicAuthSrv.URL)
 	u.User = url.UserPassword("username", "password")
-	got, err = download(u.String())
+	got, err = download(u.String(), http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,25 +134,38 @@ func TestIsTar(t *testing.T) {
 }
 
 func TestDownloadTo(t *testing.T) {
-	hh, err := ioutil.TempDir("", "helm-downloadto-")
+	tmp, err := ioutil.TempDir("", "helm-downloadto-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(hh)
+	defer os.RemoveAll(tmp)
 
-	dest := filepath.Join(hh, "dest")
+	dest := filepath.Join(tmp, "dest")
 	os.MkdirAll(dest, 0755)
 
 	// Set up a fake repo
-	srv := repotest.NewServer(hh)
+	srv := repotest.NewServer(tmp)
 	defer srv.Stop()
 	if _, err := srv.CopyCharts("testdata/*.tgz*"); err != nil {
 		t.Error(err)
 		return
 	}
 
+	hh := helmpath.Home("testdata/helmhome")
+	rf, err := repo.LoadRepositoryFile(hh.RepositoryFile())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	rf.Add(&repo.ChartRepositoryConfig{
+		Name:  "charts",
+		URL:   srv.URL(),
+		Cache: hh.CacheIndex("charts"),
+	})
+	rf.WriteFile(hh.RepositoryFile(), 0644)
+
 	c := ChartDownloader{
-		HelmHome: helmpath.Home("testdata/helmhome"),
+		HelmHome: hh,
 		Out:      os.Stderr,
 		Verify:   VerifyAlways,
 		Keyring:  "testdata/helm-test-key.pub",
@@ -178,25 +192,38 @@ func TestDownloadTo(t *testing.T) {
 }
 
 func TestDownloadTo_VerifyLater(t *testing.T) {
-	hh, err := ioutil.TempDir("", "helm-downloadto-")
+	tmp, err := ioutil.TempDir("", "helm-downloadto-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(hh)
+	defer os.RemoveAll(tmp)
 
-	dest := filepath.Join(hh, "dest")
+	dest := filepath.Join(tmp, "dest")
 	os.MkdirAll(dest, 0755)
 
 	// Set up a fake repo
-	srv := repotest.NewServer(hh)
+	srv := repotest.NewServer(tmp)
 	defer srv.Stop()
 	if _, err := srv.CopyCharts("testdata/*.tgz*"); err != nil {
 		t.Error(err)
 		return
 	}
 
+	hh := helmpath.Home("testdata/helmhome")
+	rf, err := repo.LoadRepositoryFile(hh.RepositoryFile())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	rf.Add(&repo.ChartRepositoryConfig{
+		Name:  "charts",
+		URL:   srv.URL(),
+		Cache: hh.CacheIndex("charts"),
+	})
+	rf.WriteFile(hh.RepositoryFile(), 0644)
+
 	c := ChartDownloader{
-		HelmHome: helmpath.Home("testdata/helmhome"),
+		HelmHome: hh,
 		Out:      os.Stderr,
 		Verify:   VerifyLater,
 	}
