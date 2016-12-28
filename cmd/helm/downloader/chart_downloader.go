@@ -148,7 +148,11 @@ func (c *ChartDownloader) ResolveChartVersion(ref, version string) (*url.URL, *h
 	)
 	if u.IsAbs() && len(u.Host) > 0 && len(u.Path) > 0 {
 		// If it has a scheme and host and path, it's a full URL
-		chartName = strings.TrimLeft(u.Path, "/")
+		p := strings.SplitN(strings.TrimLeft(u.Path, "/"), "-", 2)
+		if len(p) < 2 {
+			return nil, nil, fmt.Errorf("Seems that chart path is not in form of repo_url/path_to_chart, got: %s", u)
+		}
+		chartName = p[0]
 		u.Path = ""
 		rc, err = pickChartRepositoryConfigByURL(u.String(), rf.Repositories)
 		if err != nil {
@@ -189,6 +193,7 @@ func (c *ChartDownloader) ResolveChartVersion(ref, version string) (*url.URL, *h
 		return nil, nil, fmt.Errorf("chart %q has no downloadable URLs", ref)
 	}
 
+	// TODO: Seems that picking first URL is not fully correct
 	u, err = url.Parse(cv.URLs[0])
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid chart URL format: %s", ref)
@@ -247,6 +252,7 @@ func download(href string, client *http.Client) (*bytes.Buffer, error) {
 func isTar(filename string) bool {
 	return strings.ToLower(filepath.Ext(filename)) == ".tgz"
 }
+
 func pickChartRepositoryConfigByName(name string, cfgs []*repo.ChartRepositoryConfig) (*repo.ChartRepositoryConfig, error) {
 	for _, rc := range cfgs {
 		if rc.Name == name {

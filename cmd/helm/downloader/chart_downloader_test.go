@@ -26,7 +26,6 @@ import (
 	"testing"
 
 	"k8s.io/helm/cmd/helm/helmpath"
-	"k8s.io/helm/pkg/repo"
 	"k8s.io/helm/pkg/repo/repotest"
 )
 
@@ -38,9 +37,9 @@ func TestResolveChartRef(t *testing.T) {
 		{name: "full URL", ref: "http://example.com/foo-1.2.3.tgz", expect: "http://example.com/foo-1.2.3.tgz"},
 		{name: "full URL, HTTPS", ref: "https://example.com/foo-1.2.3.tgz", expect: "https://example.com/foo-1.2.3.tgz"},
 		{name: "full URL, with authentication", ref: "http://username:password@example.com/foo-1.2.3.tgz", expect: "http://username:password@example.com/foo-1.2.3.tgz"},
-		{name: "full URL, HTTPS, irrelevant version", ref: "https://example.com/foo-1.2.3.tgz", version: "0.1.0", expect: "https://example.com/foo-1.2.3.tgz"},
 		{name: "reference, testing repo", ref: "testing/alpine", expect: "http://example.com/alpine-1.2.3.tgz"},
 		{name: "reference, version, testing repo", ref: "testing/alpine", version: "0.2.0", expect: "http://example.com/alpine-0.2.0.tgz"},
+		{name: "full URL, HTTPS, irrelevant version", ref: "https://example.com/foo-1.2.3.tgz", version: "0.1.0", expect: "https://example.com/foo-1.2.3.tgz", fail: true},
 		{name: "full URL, file", ref: "file:///foo-1.2.3.tgz", fail: true},
 		{name: "invalid", ref: "invalid-1.2.3", fail: true},
 		{name: "not found", ref: "nosuchthing/invalid-1.2.3", fail: true},
@@ -140,8 +139,23 @@ func TestDownloadTo(t *testing.T) {
 	}
 	defer os.RemoveAll(tmp)
 
-	dest := filepath.Join(tmp, "dest")
-	os.MkdirAll(dest, 0755)
+	hh := helmpath.Home(tmp)
+	dest := filepath.Join(hh.String(), "dest")
+	configDirectories := []string{
+		hh.String(),
+		hh.Repository(),
+		hh.Cache(),
+		dest,
+	}
+	for _, p := range configDirectories {
+		if fi, err := os.Stat(p); err != nil {
+			if err := os.MkdirAll(p, 0755); err != nil {
+				t.Fatalf("Could not create %s: %s", p, err)
+			}
+		} else if !fi.IsDir() {
+			t.Fatalf("%s must be a directory", p)
+		}
+	}
 
 	// Set up a fake repo
 	srv := repotest.NewServer(tmp)
@@ -150,19 +164,9 @@ func TestDownloadTo(t *testing.T) {
 		t.Error(err)
 		return
 	}
-
-	hh := helmpath.Home("testdata/helmhome")
-	rf, err := repo.LoadRepositoryFile(hh.RepositoryFile())
-	if err != nil {
-		t.Error(err)
-		return
+	if err := srv.LinkIndices(); err != nil {
+		t.Fatal(err)
 	}
-	rf.Add(&repo.ChartRepositoryConfig{
-		Name:  "charts",
-		URL:   srv.URL(),
-		Cache: hh.CacheIndex("charts"),
-	})
-	rf.WriteFile(hh.RepositoryFile(), 0644)
 
 	c := ChartDownloader{
 		HelmHome: hh,
@@ -198,8 +202,23 @@ func TestDownloadTo_VerifyLater(t *testing.T) {
 	}
 	defer os.RemoveAll(tmp)
 
-	dest := filepath.Join(tmp, "dest")
-	os.MkdirAll(dest, 0755)
+	hh := helmpath.Home(tmp)
+	dest := filepath.Join(hh.String(), "dest")
+	configDirectories := []string{
+		hh.String(),
+		hh.Repository(),
+		hh.Cache(),
+		dest,
+	}
+	for _, p := range configDirectories {
+		if fi, err := os.Stat(p); err != nil {
+			if err := os.MkdirAll(p, 0755); err != nil {
+				t.Fatalf("Could not create %s: %s", p, err)
+			}
+		} else if !fi.IsDir() {
+			t.Fatalf("%s must be a directory", p)
+		}
+	}
 
 	// Set up a fake repo
 	srv := repotest.NewServer(tmp)
@@ -208,19 +227,9 @@ func TestDownloadTo_VerifyLater(t *testing.T) {
 		t.Error(err)
 		return
 	}
-
-	hh := helmpath.Home("testdata/helmhome")
-	rf, err := repo.LoadRepositoryFile(hh.RepositoryFile())
-	if err != nil {
-		t.Error(err)
-		return
+	if err := srv.LinkIndices(); err != nil {
+		t.Fatal(err)
 	}
-	rf.Add(&repo.ChartRepositoryConfig{
-		Name:  "charts",
-		URL:   srv.URL(),
-		Cache: hh.CacheIndex("charts"),
-	})
-	rf.WriteFile(hh.RepositoryFile(), 0644)
 
 	c := ChartDownloader{
 		HelmHome: hh,
