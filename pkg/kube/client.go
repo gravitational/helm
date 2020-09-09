@@ -41,6 +41,7 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -51,6 +52,7 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/resource"
 	"k8s.io/client-go/kubernetes/scheme"
+	cachetools "k8s.io/client-go/tools/cache"
 	watchtools "k8s.io/client-go/tools/watch"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/apis/core"
@@ -552,7 +554,7 @@ func (c *Client) WatchUntilReady(namespace string, reader io.Reader, timeout int
 	return perform(infos, c.watchTimeout(time.Duration(timeout)*time.Second))
 }
 
-// WatchUntilCRDEstablished polls the given CRD until it reaches the established
+// WaitUntilCRDEstablished polls the given CRD until it reaches the established
 // state. A CRD needs to reach the established state before CRs can be created.
 //
 // If a naming conflict condition is found, this function will return an error.
@@ -650,7 +652,7 @@ func createPatch(target *resource.Info, current runtime.Object) ([]byte, types.P
 	// Get a versioned object
 	versionedObject, err := asVersioned(target)
 
-	// Unstructured objects, such as CRDs, may not have an not registered error
+	// Unstructured objects, such as CRDs, may not have a not registered error
 	// returned from ConvertToVersion. Anything that's unstructured should
 	// use the jsonpatch.CreateMergePatch. Strategic Merge Patch is not supported
 	// on objects like CRDs.
@@ -802,10 +804,7 @@ func getSelectorFromObject(obj runtime.Object) (map[string]string, bool) {
 }
 
 func (c *Client) watchUntilReady(timeout time.Duration, info *resource.Info) error {
-	w, err := resource.NewHelper(info.Client, info.Mapping).WatchSingle(info.Namespace, info.Name, info.ResourceVersion)
-	if err != nil {
-		return err
-	}
+	lw := cachetools.NewListWatchFromClient(info.Client, info.Mapping.Resource.Resource, info.Namespace, fields.Everything())
 
 	kind := info.Mapping.GroupVersionKind.Kind
 	c.Log("Watching for changes to %s %s with timeout of %v", kind, info.Name, timeout)
@@ -818,7 +817,7 @@ func (c *Client) watchUntilReady(timeout time.Duration, info *resource.Info) err
 
 	ctx, cancel := watchtools.ContextWithOptionalTimeout(context.Background(), timeout)
 	defer cancel()
-	_, err = watchtools.UntilWithoutRetry(ctx, w, func(e watch.Event) (bool, error) {
+	_, err := watchtools.ListWatchUntil(ctx, lw, func(e watch.Event) (bool, error) {
 		switch e.Type {
 		case watch.Added, watch.Modified:
 			// For things like a secret or a config map, this is the best indicator
@@ -906,15 +905,12 @@ func (c *Client) WaitAndGetCompletedPodPhase(namespace string, reader io.Reader,
 }
 
 func (c *Client) watchPodUntilComplete(timeout time.Duration, info *resource.Info) error {
-	w, err := resource.NewHelper(info.Client, info.Mapping).WatchSingle(info.Namespace, info.Name, info.ResourceVersion)
-	if err != nil {
-		return err
-	}
+	lw := cachetools.NewListWatchFromClient(info.Client, info.Mapping.Resource.Resource, info.Namespace, fields.Everything())
 
 	c.Log("Watching pod %s for completion with timeout of %v", info.Name, timeout)
 	ctx, cancel := watchtools.ContextWithOptionalTimeout(context.Background(), timeout)
 	defer cancel()
-	_, err = watchtools.UntilWithoutRetry(ctx, w, func(e watch.Event) (bool, error) {
+	_, err := watchtools.ListWatchUntil(ctx, lw, func(e watch.Event) (bool, error) {
 		return isPodComplete(e)
 	})
 
